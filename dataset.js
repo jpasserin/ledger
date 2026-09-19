@@ -200,6 +200,28 @@
 
   const uid = (p) => p + Math.random().toString(36).slice(2, 9);
 
+  /* A split. The entry keeps its total; `parts` names the OTHER tags and how
+     much of the total is theirs, positive, in the entry's currency. The
+     entry's own tag gets what is left - so the parts must come to less than
+     the whole. Equal would leave the own tag with nothing, and that is a
+     re-tag, not a split. Returns the cleaned list, or undefined for none. */
+  function checkParts(amount, parts) {
+    const list = (parts || []).map((p) => ({
+      group: String(p.group || '').trim(),
+      amount: Math.round(Math.abs(+p.amount || 0) * 100) / 100,
+    }));
+    if (!list.length) return undefined;
+    for (const p of list) {
+      if (!p.group) throw new Error('Every part needs a tag.');
+      if (!(p.amount > 0)) throw new Error('Every part needs an amount.');
+    }
+    const sum = Math.round(list.reduce((t, p) => t + p.amount, 0) * 100);
+    if (sum >= Math.round(Math.abs(+amount || 0) * 100)) {
+      throw new Error('The parts must add up to less than the amount.');
+    }
+    return list;
+  }
+
   function addEntry(d, e) {
     const month = String(e.date).slice(0, 7);
     d.ledger.push({
@@ -220,6 +242,7 @@
       tag: e.tag || undefined,
       oneoff: e.oneoff || undefined,
       budget: e.budget || undefined,
+      parts: checkParts(e.amount, e.parts),
       src: e.src || uid('m!'),
       manual: true,
     });
@@ -229,7 +252,14 @@
   function updateEntry(d, src, patch) {
     const r = d.ledger.find((x) => x.src === src);
     if (!r) return d;
-    Object.assign(r, patch);
+    /* Validate the split BEFORE touching the row, so a refused save leaves
+       the entry exactly as it was. */
+    const { parts, ...rest } = patch;
+    if ('parts' in patch) {
+      const ok = checkParts(patch.amount !== undefined ? patch.amount : r.amount, parts);
+      if (ok) r.parts = ok; else delete r.parts;
+    }
+    Object.assign(r, rest);
     if (patch.date) {
       r.month = String(patch.date).slice(0, 7);
       r.rawMonth = r.month;
@@ -373,10 +403,64 @@
     return d;
   }
 
+  /* ------------------------------------------------------ categories file --
+
+     Categories travel on their own too: a small file with the parents, which
+     tag is filed where, and the display labels. Importing one MERGES - it adds
+     what is missing and never moves, renames or removes what is already there,
+     so pulling a list in cannot re-file the tags your entries already carry.
+     A full export is accepted as well; it has the same taxonomy inside.     */
+  function categoriesBlob(d) {
+    const t = tax(d);
+    return JSON.stringify({
+      kind: 'ledger-categories', format: FORMAT,
+      exportedAt: new Date().toISOString(),
+      counts: { categories: t.parents.length, tags: Object.keys(t.of).length },
+      taxonomy: { parents: t.parents, of: t.of, labels: t.labels || {} },
+    });
+  }
+  function parseCategories(text) {
+    let j;
+    try { j = JSON.parse(text); }
+    catch (e) { throw new Error('That is not JSON.'); }
+    const t = j && (j.taxonomy || (j.dataset && j.dataset.taxonomy) || (Array.isArray(j.parents) && j));
+    if (!t || !Array.isArray(t.parents)) throw new Error('No categories in that file.');
+    return {
+      parents: t.parents.filter((p) => p && p.id && p.label)
+        .map((p) => ({ id: String(p.id), label: String(p.label), cls: p.cls || 'other' })),
+      of: Object.fromEntries(Object.entries(t.of || {}).filter(([k, v]) => k && v)),
+      labels: { ...(t.labels || {}) },
+    };
+  }
+  /* Returns what WOULD be added; with dry:true adds nothing. */
+  function mergeTaxonomy(d, inc, opts) {
+    const dry = !!(opts && opts.dry);
+    const t = tax(d);
+    t.labels = t.labels || {};
+    const have = new Set(t.parents.map((p) => p.id));
+    let parents = 0, tags = 0;
+    for (const p of inc.parents) {
+      if (have.has(p.id)) continue;
+      have.add(p.id); parents++;
+      if (!dry) t.parents.push({ id: p.id, label: p.label, cls: p.cls });
+    }
+    for (const [tag, pid] of Object.entries(inc.of)) {
+      if (t.of[tag] || !have.has(pid)) continue;
+      tags++;
+      if (!dry) t.of[tag] = pid;
+    }
+    if (!dry) {
+      for (const [tag, label] of Object.entries(inc.labels)) {
+        if (!t.labels[tag] && t.of[tag] && label !== tag) t.labels[tag] = label;
+      }
+    }
+    return { parents, tags };
+  }
+
   return {
     KEY, FORMAT, empty, normalise, load, save, loadAsync, saveAsync,
     canPersist, storageError, isEmpty,
-    parseImport, exportBlob, touch, uid,
+    parseImport, exportBlob, categoriesBlob, parseCategories, mergeTaxonomy, touch, uid,
     addEntry, updateEntry, deleteEntry,
     addAccount, removeAccount, setOwner, removeOwner, kidsOf,
     addCategory, renameCategory, setCategoryClass, removeCategory,

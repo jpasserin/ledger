@@ -117,6 +117,23 @@
 
   const acct = (code) => D.accounts.find((a) => a.code === code);
 
+  /* A split entry counts as its parts: each named tag with its amount, and
+     the entry's own tag with what is left, every part carrying the entry's
+     sign, date and src. Everything that reads tags goes through rows(), so
+     the Activity, the Summary and the budgets all see two facts; the
+     statement reads the ledger directly and still shows the one line. */
+  const hasParts = (r) => r.parts && r.parts.length;
+  function expand(r) {
+    const sign = r.amount < 0 ? -1 : 1;
+    let rest = Math.abs(r.amount);
+    const out = r.parts.map((p, i) => {
+      rest -= p.amount;
+      return { ...r, group: p.group, amount: sign * p.amount, parts: undefined, partOf: r.src, part: i + 1 };
+    });
+    out.unshift({ ...r, amount: sign * Math.round(rest * 100) / 100, parts: undefined, partOf: r.src, part: 0 });
+    return out;
+  }
+
   function rows(opts = {}) {
     let out = opts.synthetic ? D.ledger.concat(D.synthetic) : D.ledger;
     if (opts.owners && opts.owners.length) {
@@ -128,6 +145,7 @@
     if (opts.onlyCategory) {
       out = out.filter((r) => { const a = acct(r.account); return a && a.category === opts.onlyCategory; });
     }
+    if (out.some(hasParts)) out = out.flatMap((r) => (hasParts(r) ? expand(r) : [r]));
     return out;
   }
 

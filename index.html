@@ -447,7 +447,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="17";
+const APP_VERSION="18";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -497,7 +497,7 @@ function loadStore(){
   catch (e) { CAN_SAVE = false; return {}; }
 }
 const store = Object.assign({ excludeOwners:[], dismissed:[], registry:{}, showOneOff:false, budgets:[],
-    tagOf:{}, tagExtra:[], tagLabel:{}, tagGone:[], tagHidden:[], tagCls:{}, splits:{} }, loadStore());
+    tagOf:{}, tagExtra:[], tagLabel:{}, tagGone:[], tagHidden:[], tagCls:{} }, loadStore());
 const save = () => {
   if (!CAN_SAVE) return;
   try { localStorage.setItem(LS, JSON.stringify(store)); }
@@ -536,6 +536,25 @@ function taxonomy(){
 }
 /* What a tag is CALLED here, which can differ from what the sheet calls it. */
 const tagName = (t) => ((D.taxonomy||{}).labels||{})[t] || t;
+
+/* Suggested codes, so a name is typed once. Two letters for a person, up to
+   five for a sheet tab; either can be typed over, and once it has been, the
+   name stops driving it. */
+const suggestOwnerCode = (name) => {
+  const w = String(name).trim().split(/\s+/).map((x)=>x.replace(/[^A-Za-z0-9]/g,'')).filter(Boolean);
+  return (w.length>1 ? w.map((x)=>x[0]).join('') : (w[0]||'')).slice(0,2).toUpperCase();
+};
+const suggestSheetCode = (key) => {
+  const w = String(key).trim().split(/\s+/).map((x)=>x.replace(/[^A-Za-z0-9]/g,'')).filter(Boolean);
+  return (w.length>1 && w[0].length>=3 ? w[0] : w.join('')).slice(0,5).toUpperCase();
+};
+/* A field that follows another until you type into it yourself. */
+function follow(srcId, dstId, fn, isTouched, setTouched){
+  const s=document.getElementById(srcId), d=document.getElementById(dstId);
+  if (!s || !d) return;
+  s.oninput=()=>{ if (!isTouched()) d.value=fn(s.value); };
+  d.oninput=()=>setTouched(!!d.value);
+}
 const OWNERS = () => D.owners || {};
 const ownerKind = (o) => (D.ownerKind||{})[o] || 'parent';
 const isKid = (o) => ownerKind(o)==='kid';
@@ -582,7 +601,7 @@ const state = { cur:'USD', tab:'year', account:null, editing:false, spendMonth:n
   openTag:null, settings:'data', tagPick:null, ownerEdit:null, entry:null, series:'total', wsel:'all',
   opFilter:{ q:'', tag:'', subtag:'', from:'', to:'', min:'', max:'', oneoff:false,
     dir:'', sort:'date', desc:true },
-  opSplit:null, fmenu:null,
+  fmenu:null,
   prevDraft:null, prevIdx:null, renaming:null, histLo:null, histHi:null,
   clsPick:null, budget:null, budgetEdit:null, checks:false, check:null, savCur:'' };
 /* One place decides whether one-offs are in. Every screen used to ask for
@@ -1852,30 +1871,30 @@ function editorFields(f, isNew){
   const owners = Object.entries(OWNERS());
   return `
   <div class="field"><label>Bank</label>
-    <input id="fBank" value="${esc(f.bank)}" placeholder="who holds it"></div>
-  <div class="field"><label>Key — what you see everywhere</label>
-    <input id="fKey" value="${esc(f.key)}" placeholder="short name"></div>
-  ${isNew?`<div class="field"><label>Sheet code — permanent, links to the rows</label>
-    <input id="fCode" value="${esc(f.code)}" placeholder="e.g. BNPJE"></div>`
+    <input id="fBank" value="${esc(f.bank)}"></div>
+  <div class="field"><label>Key</label>
+    <input id="fKey" value="${esc(f.key)}"></div>
+  ${isNew?`<div class="field"><label>Sheet code</label>
+    <input id="fCode" value="${esc(f.code)}"></div>`
   :`<div class="field"><label>Sheet code</label>
-    <input value="${esc(f.code)}" disabled title="the spreadsheet tab name — renaming it would orphan ten years of rows"></div>`}
-  <div class="field"><label>Owners — pick as many as apply</label>
+    <input value="${esc(f.code)}" disabled></div>`}
+  <div class="field"><label>Owners</label>
     ${!owners.length?'<div class="hint" style="margin-top:0;margin-bottom:6px">No people yet — gear › People</div>':''}
     <div class="chips">${owners.map(([o,n])=>
       `<button class="chip ${isKid(o)?'pink':''} ${f.owners.includes(o)?'on':''}"
         data-owner="${o}">${esc(n)}</button>`).join('')}</div></div>
-  <div class="field"><label>Category — is the money reachable</label>
+  <div class="field"><label>Category</label>
     <div class="chips">${CATKEYS.map((c)=>
       `<button class="chip ${f.category===c?'on':''}" data-cat="${c}">${esc(REG.CATEGORY[c].label)}</button>`).join('')}</div></div>
   ${isNew?`
-  <div class="field"><label>Kind of record</label>
+  <div class="field"><label>Kind</label>
     <div class="chips">${Object.entries(REG.TYPE_LABEL).map(([t,l])=>
       `<button class="chip ${f.type===t?'on':''}" data-type="${t}">${esc(l)}</button>`).join('')}</div></div>
   <div class="field"><label>Currency</label>
     <div class="chips">${['USD','EUR','AUD'].map((c)=>
       `<button class="chip ${f.currency===c?'on':''}" data-ccy="${c}">${c}</button>`).join('')}</div></div>`:''}
   <div class="field"><label>Subtype</label>
-    <input id="fSub" value="${esc(f.subtype)}" placeholder="checking, savings, ira…"></div>`;
+    <input id="fSub" value="${esc(f.subtype)}"></div>`;
 }
 
 function accountForm(code){
@@ -2048,52 +2067,6 @@ function opFilterCard(ops, shown){
 }
 
 
-/* ------------------------------------------------------- splitting an entry --
-
-   One purchase, several tags. A supermarket run that was half food and half
-   clothes is one line on the statement and two facts about the year. The
-   split is stored per row id; the original amount is never changed, and the
-   parts must add up to it or it is not a split, it is an error.             */
-function splitCard(r, s){
-  /* A working copy. Editing store.splits directly would save half-finished
-     parts that do not add up, which is worse than no split at all. */
-  if (!state.draftSplit) state.draftSplit =
-    (store.splits[r.src] || [{ group:r.group, amount:r.amount }]).map((p)=>({...p}));
-  const cur = state.draftSplit;
-  const tax = taxonomy();
-  const sum = cur.reduce((t,p)=>t+(+p.amount||0),0);
-  const left = cents(r.amount - sum);
-  return `<div class="card">
-    <h2><span class="act" data-splitclose="1">‹ Back</span> Split this entry</h2>
-    <div class="hero" style="font-size:24px">${m2(r.amount, s)}</div>
-    <div class="heroSub">${esc(r.party||'—')} · ${esc(r.date)}</div>
-    <div class="rows" style="margin-top:14px">${cur.map((p,i)=>`
-      <div class="row flat">
-        <div style="flex:1;min-width:0">
-          <select data-splitgrp="${i}" style="width:100%">${
-            Object.keys(tax.OF).sort().map((g)=>
-              `<option ${g===p.group?'selected':''}>${esc(g)}</option>`).join('')}</select>
-        </div>
-        <div style="width:96px"><input data-splitamt="${i}" value="${p.amount}"
-          inputmode="decimal" style="width:100%;text-align:right"></div>
-        ${cur.length>1?`<span class="act" data-splitdel="${i}">✕</span>`:''}
-      </div>`).join('')}</div>
-    <div class="row flat" style="margin-top:6px">
-      <div><div class="code" style="font-size:12px">Still to allocate</div></div>
-      <div class="amt"><b style="color:${Math.abs(left)<0.005?'var(--good)':'var(--warn)'}">${m2(left,s)}</b></div>
-    </div>
-    <div class="btnrow" style="margin-top:12px">
-      <button class="btn" data-splitadd="1">Add a part</button>
-      <button class="btn primary" data-splitsave="${esc(r.src)}"
-        ${Math.abs(left)>=0.005?'disabled':''}>Save</button>
-    </div>
-    ${store.splits[r.src]?`<button class="btn danger" style="margin-top:7px"
-      data-splitundo="${esc(r.src)}">Remove the split</button>`:''}
-    
-  </div>`;
-}
-const cents = (v) => Math.round(v*100)/100;
-
 /* ------------------------------------------ an investment account's history --
 
    You asked for shares, price and balance month by month. The books do not
@@ -2155,11 +2128,6 @@ function accountDetail(code){
      being handed 1,729 rows from thirteen years is not "the operations of
      that year". */
   const allOps = C.operations(code, 20000).filter((r)=>r.docYear===state.year);
-  if (state.opSplit) {
-    const r = allOps.find((x)=>x.src===state.opSplit);
-    if (r) return splitCard(r, symOf(a.currency));
-    state.opSplit = null;
-  }
   const ops = filterOps(allOps);
   const lat = C.latest({...opts(), includeClosed:true}).find((x)=>x.code===code);
   const s = symOf(a.currency);
@@ -2200,12 +2168,10 @@ function accountDetail(code){
       ${!allOps.length ? `<div class="hint" style="margin-top:0">Nothing in ${state.year} yet.</div>` : ''}
 
       <div class="rows">${ops.slice(0,120).map((r)=>{
-        const sp = store.splits[r.src];
         return `<div class="row flat" data-editentry="${esc(r.src)}">
           <div><div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,28))}</div>
-            <div class="sub">${r.date} · ${sp
-              ? sp.map((p)=>esc(p.group)).join(' + ')+' <b>split</b>'
-              : esc(r.group)}${r.note?' · '+esc(r.note.slice(0,16)):''}</div></div>
+            <div class="sub">${r.date} · ${[r.group].concat((r.parts||[]).map((p)=>p.group))
+              .map((g)=>esc(tagName(g))).join(' + ')}${r.note?' · '+esc(r.note.slice(0,16)):''}</div></div>
           <div class="amt"><b style="color:${r.amount<0?'var(--bad)':'var(--good)'}">${m2(r.amount,s)}</b>
             ${r.solde!==null?`<span class="alt">${m0(r.solde,s)}</span>`:''}</div>
         </div>`;}).join('')}</div>
@@ -2621,6 +2587,18 @@ function entryForm(){
         ${tags.map((t)=>`<option value="${esc(t)}" ${t===e.group?'selected':''}>${
           esc(tagName(t))} · ${esc((tax.byId[tax.OF[t]]||{}).label||tax.OF[t])}</option>`).join('')}
       </select></div>
+    ${tags.length?`<div class="field"><label>Split</label>
+      ${(e.parts||[]).map((p,i)=>`<div class="btnrow" style="margin-bottom:6px">
+        <select id="eSpGrp${i}" style="flex:1;min-width:0">
+          <option value="">—</option>
+          ${tags.map((t)=>`<option value="${esc(t)}" ${t===p.group?'selected':''}>${esc(tagName(t))}</option>`).join('')}
+        </select>
+        <input id="eSpAmt${i}" value="${esc(String(p.amount||''))}" inputmode="decimal"
+          placeholder="0.00" style="width:90px;text-align:right">
+        <button class="chip" data-espdel="${i}" style="flex:none">✕</button>
+      </div>`).join('')}
+      ${(e.parts||[]).length?`<div class="hint" id="eRest" style="margin:0 0 6px">${restLine(e)}</div>`:''}
+      <button class="chip" data-espadd="1">+ tag</button></div>`:''}
     <div class="field"><label>Note</label>
       <input id="eNote" value="${esc(e.note||'')}"></div>
     ${budgets().length?`<div class="field"><label>Budget</label>
@@ -2634,11 +2612,20 @@ function entryForm(){
       <button class="btn primary" data-esave="1">${e.src?'Save':'Add'}</button>
       <button class="btn" data-ecancel="1">Cancel</button>
     </div>
-    ${e.src?`<button class="btn" style="margin-top:7px" data-split="${esc(e.src)}">
-      Split across tags</button>
-    <button class="btn danger" style="margin-top:7px" data-edelete="${esc(e.src)}">
+    ${e.src?`<button class="btn danger" style="margin-top:7px" data-edelete="${esc(e.src)}">
       Delete</button>`:''}`}
   </div>`;
+}
+
+/* What the entry's own tag is left with once the parts are taken out. Red
+   when the parts eat the whole amount - the save will refuse that. */
+function restLine(e){
+  const a = D.accounts.find((x)=>x.code===e.account);
+  const s = symOf(a?a.currency:state.cur);
+  const total = Math.abs(parseFloat(e.amount))||0;
+  const used = (e.parts||[]).reduce((t,p)=>t+(Math.abs(parseFloat(p.amount))||0),0);
+  const rest = Math.round((total-used)*100)/100;
+  return `${e.group?esc(tagName(e.group)):'—'} <b style="${rest>0?'':'color:var(--bad)'}">${m2(rest,s)}</b>`;
 }
 
 const SETTINGS_TABS = [['data','Data'],['owners','People'],['cats','Categories'],['about','About']];
@@ -2729,7 +2716,7 @@ function personPage(){
     <div class="field"><label>Name</label>
       <input id="oName" value="${esc(p.name||'')}"></div>
     <div class="field"><label>Code</label>
-      <input id="oCode" value="${esc(p.code||'')}" ${isNew?'':'disabled'}></div>
+      <input id="oCode" value="${esc(isNew?(p.draftCode||''):p.code)}" ${isNew?'':'disabled'}></div>
     <div class="field"><label>Kind</label>
       <div class="chips">
         <button class="chip ${p.kindSel!=='kid'?'on':''}" data-okind="parent">Parent</button>
@@ -2752,7 +2739,10 @@ function settingsCats(){
   const unfiled = DS.tagsUsed(D).filter((t)=>!tax.OF[t]);
   return `
   <div class="card">
-    <h2>Categories <button class="gbtn" data-catnew="1">+</button></h2>
+    <h2>Categories <span style="display:flex;gap:6px">
+      <button class="gbtn ghost" data-catimport="1">Import</button>
+      <button class="gbtn" data-catnew="1">+</button></span></h2>
+    <input type="file" id="fCatImport" accept=".json,application/json" style="display:none">
     ${!tax.PARENTS.length?`<div class="hint" style="margin-top:0">None yet.</div>`:''}
     <div class="tiles">${tax.PARENTS.map((p)=>`
       <div class="tile cls-${esc(p.cls||'other')}" data-catedit="${esc(p.id)}">
@@ -2787,6 +2777,8 @@ function catPage(){
         `<button class="chip ${(isNew ? (p.cls||'optional') : (cat||{}).cls)===k?'on':''}"
           data-${isNew?'newcls':'setcls'}="${k}">${esc(c.label)}</button>`).join('')}</div>
       </div>
+    ${isNew?`<div class="field"><label>Tags</label>
+      <input id="cTags" value="${esc(p.tags!==undefined?p.tags:(p.name||''))}" placeholder="comma separated"></div>`:''}
     <div class="btnrow">
       <button class="btn primary" data-csave="1">${isNew?'Create':'Save'}</button>
       <button class="btn" data-setback="1">Cancel</button>
@@ -2905,8 +2897,7 @@ function renderYearBar(){
    on the SAME screen must not animate and must not scroll to the top - that
    is the jump. Only actually going somewhere does either. */
 const screenKey = () => [state.tab, state.account||'', state.spendCat||'',
-  state.entry?'entry':'', state.editing?'edit':'', state.prevDraft?'prev':'',
-  state.opSplit||''].join('|');
+  state.entry?'entry':'', state.editing?'edit':'', state.prevDraft?'prev':''].join('|');
 let lastScreen = null;
 
 function render(){
@@ -3034,6 +3025,10 @@ function wire(){
     state.openTag = state.openTag===el.dataset.tagopen ? null : el.dataset.tagopen; render(); });
 
   /* editor */
+  if (state.form) {
+    follow('fKey', 'fCode', suggestSheetCode,
+      ()=>state.form.codeTouched, (v)=>{ state.form.codeTouched=v; });
+  }
   document.querySelectorAll('[data-owner]').forEach((el)=>el.onclick=()=>{
     syncForm(); const o=el.dataset.owner, f=state.form;
     f.owners = f.owners.includes(o) ? f.owners.filter((x)=>x!==o) : [...f.owners,o];
@@ -3243,16 +3238,22 @@ function wire(){
   document.querySelectorAll('[data-personedit]').forEach((el)=>el.onclick=()=>{
     const o=el.dataset.personedit;
     state.setPage={ kind:'person', code:o, name:OWNERS()[o]||o, kindSel:ownerKind(o) }; render(); });
+  if (state.setPage && state.setPage.kind==='person' && !state.setPage.code) {
+    follow('oName', 'oCode', suggestOwnerCode,
+      ()=>state.setPage.codeTouched, (v)=>{ state.setPage.codeTouched=v; });
+  }
   document.querySelectorAll('[data-okind]').forEach((el)=>el.onclick=()=>{
     const n=document.getElementById('oName'), c=document.getElementById('oCode');
     if (n) state.setPage.name=n.value;
-    if (c && !state.setPage.code) state.setPage.code=c.value;
+    /* A DRAFT. Writing it into p.code would turn the page into an edit page
+       - code disabled, "Save", no taken-check - before the person exists. */
+    if (c && !state.setPage.code) state.setPage.draftCode=c.value;
     state.setPage.kindSel=el.dataset.okind; render(); });
   document.querySelectorAll('[data-osave]').forEach((el)=>el.onclick=()=>{
     const p=state.setPage;
     const n=document.getElementById('oName'), c=document.getElementById('oCode');
     const name=(n&&n.value||'').trim();
-    const code=(p.code||(c&&c.value)||'').trim().toUpperCase();
+    const code=(p.code||(c&&c.value)||p.draftCode||'').trim().toUpperCase();
     if (!name||!code) { alert('A name and a code.'); return; }
     if (!p.code && OWNERS()[code]) { alert(code+' is taken.'); return; }
     DS.setOwner(D, code, name, p.kindSel || (p.code?ownerKind(p.code):'parent'));
@@ -3268,9 +3269,37 @@ function wire(){
     state.setPage={ kind:'cat', id:'', name:'', cls:'optional' }; render(); });
   document.querySelectorAll('[data-catedit]').forEach((el)=>el.onclick=()=>{
     state.setPage={ kind:'cat', id:el.dataset.catedit }; render(); });
+  if (state.setPage && state.setPage.kind==='cat' && !state.setPage.id) {
+    /* The Tags field follows the name: a category always gets a tag of its
+       own name, and this is where you add the others, comma separated. */
+    follow('cName', 'cTags', (v)=>v.trim(),
+      ()=>state.setPage.tagsTouched, (v)=>{ state.setPage.tagsTouched=v; });
+  }
   document.querySelectorAll('[data-newcls]').forEach((el)=>el.onclick=()=>{
     const n=document.getElementById('cName'); if (n) state.setPage.name=n.value;
+    const t=document.getElementById('cTags'); if (t) state.setPage.tags=t.value;
     state.setPage.cls=el.dataset.newcls; render(); });
+  document.querySelectorAll('[data-catimport]').forEach((el)=>el.onclick=()=>{
+    const inp=document.getElementById('fCatImport');
+    if (!inp) return;
+    inp.onchange=()=>{
+      const f=inp.files && inp.files[0]; if(!f) return;
+      const rd=new FileReader();
+      rd.onload=()=>{
+        let inc;
+        try { inc = DS.parseCategories(String(rd.result)); }
+        catch (err) { alert(err.message); return; }
+        const n = DS.mergeTaxonomy(D, inc, { dry:true });
+        if (!n.parents && !n.tags) { alert('Nothing new in that file.'); return; }
+        if (!confirm('Add '+n.parents+' categor'+(n.parents===1?'y':'ies')+' and '+n.tags
+          +' tag'+(n.tags===1?'':'s')+'? Nothing already here changes.')) return;
+        DS.mergeTaxonomy(D, inc);
+        commit();
+      };
+      rd.onerror=()=>alert('Could not read that file.');
+      rd.readAsText(f);
+    };
+    inp.click(); });
   document.querySelectorAll('[data-setcls]').forEach((el)=>el.onclick=()=>{
     const n=document.getElementById('cName'); if (n) state.setPage.name=n.value;
     DS.setCategoryClass(D, state.setPage.id, el.dataset.setcls); commit(); });
@@ -3280,7 +3309,19 @@ function wire(){
     const label=(n&&n.value||'').trim();
     if (!label) { alert('A name.'); return; }
     try {
-      if (!p.id) DS.addCategory(D, label, p.cls || 'optional');
+      if (!p.id) {
+        /* The category's own name is always one of its tags; the field adds
+           the rest. Check every tag BEFORE creating anything, so a duplicate
+           leaves the data exactly as it was. */
+        const t=document.getElementById('cTags');
+        const tags=[...new Set([label].concat((t&&t.value||'').split(',').map((s)=>s.trim()).filter(Boolean)))];
+        const have=taxonomy().OF;
+        const dup=tags.find((x)=>have[x]);
+        if (dup) throw new Error('"'+dup+'" already exists.');
+        DS.addCategory(D, label, p.cls || 'optional');
+        const id=D.taxonomy.parents[D.taxonomy.parents.length-1].id;
+        for (const x of tags) DS.addTag(D, x, id);
+      }
       else DS.renameCategory(D, p.id, label);
     } catch (e) { alert(e.message); return; }
     state.setPage=null; commit(); });
@@ -3365,20 +3406,34 @@ function wire(){
 
   /* ---- entries ---- */
   const newEntry=(code)=>({ account:code, date:TODAY, party:'', amount:'',
-    sign:-1, group:'', note:'', oneoff:false, budget:'', src:null });
+    sign:-1, group:'', note:'', oneoff:false, budget:'', parts:[], src:null });
   document.querySelectorAll('[data-addentry]').forEach((el)=>el.onclick=()=>{
     state.entry=newEntry(el.dataset.addentry||state.account); state.tab='accounts'; render(); });
   document.querySelectorAll('[data-editentry]').forEach((el)=>el.onclick=()=>{
     const r=D.ledger.find((x)=>x.src===el.dataset.editentry); if(!r) return;
     state.entry={ account:r.account, date:r.date, party:r.party,
       amount:Math.abs(r.amount), sign:r.amount<0?-1:1, group:r.group, note:r.note,
-      oneoff:!!r.oneoff, budget:r.budget||'', src:r.src };
+      oneoff:!!r.oneoff, budget:r.budget||'', parts:(r.parts||[]).map((p)=>({...p})), src:r.src };
     render(); });
   const syncEntry=()=>{ const e=state.entry; if(!e) return;
     const g=(id)=>{const x=document.getElementById(id);return x?x.value:undefined;};
     const m={ eAcct:'account', eDate:'date', eParty:'party', eAmount:'amount',
       eGroup:'group', eNote:'note' };
-    for (const [id,f] of Object.entries(m)) { const v=g(id); if (v!==undefined) e[f]=v; } };
+    for (const [id,f] of Object.entries(m)) { const v=g(id); if (v!==undefined) e[f]=v; }
+    e.parts=(e.parts||[]).map((p,i)=>({ group:g('eSpGrp'+i)??p.group, amount:g('eSpAmt'+i)??p.amount })); };
+  /* The rest line follows the amounts as they are typed - no re-render, the
+     field you are typing in must stay put. */
+  if (state.entry && (state.entry.parts||[]).length) {
+    const live=()=>{ syncEntry(); const el=document.getElementById('eRest'); if (el) el.innerHTML=restLine(state.entry); };
+    for (const id of ['eAmount','eGroup'].concat(state.entry.parts.map((p,i)=>'eSpAmt'+i))) {
+      const x=document.getElementById(id); if (x) x.oninput=live;
+    }
+    const eg=document.getElementById('eGroup'); if (eg) eg.onchange=live;
+  }
+  document.querySelectorAll('[data-espadd]').forEach((el)=>el.onclick=()=>{
+    syncEntry(); state.entry.parts.push({ group:'', amount:'' }); render(); });
+  document.querySelectorAll('[data-espdel]').forEach((el)=>el.onclick=()=>{
+    syncEntry(); state.entry.parts.splice(+el.dataset.espdel,1); render(); });
   document.querySelectorAll('[data-esign]').forEach((el)=>el.onclick=()=>{
     syncEntry(); state.entry.sign=+el.dataset.esign; render(); });
   document.querySelectorAll('[data-eoneoff]').forEach((el)=>el.onclick=()=>{
@@ -3401,9 +3456,10 @@ function wire(){
     const kind=(tax.byId[tax.OF[e.group]]||{}).kind || 'spend';
     const payload={ account:e.account, date:e.date, party:e.party,
       amount:amt*(e.sign<0?-1:1), group:e.group, note:e.note,
-      oneoff:!!e.oneoff, budget:e.budget||undefined,
+      oneoff:!!e.oneoff, budget:e.budget||undefined, parts:e.parts||[],
       currency:a?a.currency:'USD', type:kind };
-    if (e.src) DS.updateEntry(D, e.src, payload); else DS.addEntry(D, payload);
+    try { if (e.src) DS.updateEntry(D, e.src, payload); else DS.addEntry(D, payload); }
+    catch (err) { alert(err.message); return; }
     state.entry=null; commit(); });
   document.querySelectorAll('[data-edelete]').forEach((el)=>el.onclick=()=>{
     if (!confirm('Delete this entry?')) return;
@@ -3414,27 +3470,6 @@ function wire(){
       + 'export, propose a tag per line from the ' + D.merchants.length + ' payees already learned '
       + 'from your own history, and write to a new planning sheet — never to your year books.'); });
 
-  document.querySelectorAll('[data-split]').forEach((el)=>el.onclick=()=>{
-    state.opSplit=el.dataset.split; render(); });
-  document.querySelectorAll('[data-splitclose]').forEach((el)=>el.onclick=()=>{
-    state.opSplit=null; state.draftSplit=null; render(); });
-  const draft=()=>state.draftSplit;
-  const syncSplit=()=>{ const d=draft(); if(!d) return;
-    document.querySelectorAll('[data-splitgrp]').forEach((e)=>{ d[+e.dataset.splitgrp].group=e.value; });
-    document.querySelectorAll('[data-splitamt]').forEach((e)=>{ d[+e.dataset.splitamt].amount=e.value; }); };
-  document.querySelectorAll('[data-splitgrp],[data-splitamt]').forEach((e)=>
-    e.onchange=()=>{ syncSplit(); render(); });
-  document.querySelectorAll('[data-splitadd]').forEach((el)=>el.onclick=()=>{
-    syncSplit(); const d=draft(); if(d) d.push({ group:'Misc', amount:0 }); render(); });
-  document.querySelectorAll('[data-splitdel]').forEach((el)=>el.onclick=()=>{
-    syncSplit(); const d=draft(); if(d) d.splice(+el.dataset.splitdel,1); render(); });
-  document.querySelectorAll('[data-splitsave]').forEach((el)=>el.onclick=()=>{
-    syncSplit(); const d=draft(); if(!d) return;
-    store.splits[el.dataset.splitsave]=d.map((p)=>({ group:p.group, amount:+p.amount }));
-    save(); state.opSplit=null; state.draftSplit=null; render(); });
-  document.querySelectorAll('[data-splitundo]').forEach((el)=>el.onclick=()=>{
-    delete store.splits[el.dataset.splitundo];
-    save(); state.opSplit=null; state.draftSplit=null; render(); });
   document.querySelectorAll('[data-go]').forEach((el)=>el.onclick=()=>{ state.tab=el.dataset.go; render(); });
   document.querySelectorAll('[data-go-import]').forEach((el)=>el.onclick=()=>{
     state.settings='data'; state.tab='settings'; state.setPage=null; render(); });

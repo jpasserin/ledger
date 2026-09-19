@@ -481,7 +481,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="24";
+const APP_VERSION="25";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -626,6 +626,8 @@ function recomputeClock(){
   LAST_ENTRY = C.lastEntry() === '0000-00-00' ? TODAY : C.lastEntry();
   YEARS = (D.realYears && D.realYears.length ? D.realYears.slice() : [YEAR])
     .sort((a,b)=>a-b);
+  /* One year past the last book, so next year's prevision can be made now. */
+  if (!YEARS.includes(YEAR+1)) YEARS.push(YEAR+1);
 }
 recomputeClock();
 
@@ -1716,7 +1718,7 @@ const prevList = (Y) => (store.previsions||[]).filter((p)=>p.year===Y)
    through September, so September is a guess too. */
 function futureMonths(Y){
   const out=[];
-  const from = Y<YEAR ? 13 : +NOW.slice(5,7);
+  const from = Y<YEAR ? 13 : Y>YEAR ? 1 : +NOW.slice(5,7);   // next year: all twelve
   for (let i=from;i<=12;i++) out.push(`${Y}-${String(i).padStart(2,'0')}`);
   return out;
 }

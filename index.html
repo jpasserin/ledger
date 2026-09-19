@@ -481,7 +481,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="23";
+const APP_VERSION="24";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -1724,13 +1724,19 @@ const prevTotal = (entries) => (entries||[]).reduce((s,e)=>s+(+e.amount||0),0);
 
 /* The forecast for one category: real months as they happened, future months
    as predicted. */
-function forecastCat(Y, id, prev){
-  const actual = spendByParent(Y)[id] || { months:{} };
+function forecastCat(Y, id, prev, cur){
+  cur = cur || state.cur;
+  const actual = spendByParent(Y)[id] || { months:{}, rows:[] };
   const fut = futureMonths(Y);
   let real=0, guess=0;
-  for (const [m,v] of Object.entries(actual.months)) if (!fut.includes(m)) real+=Math.abs(v);
+  /* The months gone, in the currency asked for - not in whatever the screen
+     happens to show, because the editor works in the plan's own currency. */
+  for (const r of actual.rows) if (!fut.includes(r.month)) real += C.conv(r.amount, r.currency, r.month, cur);
+  real = Math.abs(real);
+  /* A prevision is typed in ONE currency, and it is remembered with it. */
+  const pcur = (prev && prev.currency) || cur;
   const byMonth = (prev&&prev.cats&&prev.cats[id])||{};
-  for (const m of fut) guess += prevTotal(byMonth[m]);
+  for (const m of fut) guess += C.conv(prevTotal(byMonth[m]), pcur, m, cur);
   return { real, guess, total: real+guess };
 }
 
@@ -1826,44 +1832,68 @@ function previsionEditor(){
   const doneN = cats.filter((p)=>prevFilled(draft,p.id)).length;
   const allDone = cats.length>0 && doneN===cats.length;
 
+  /* One currency for the whole prevision, chosen at the top and only fixed by
+     Save: typed 1000 as dollars and meant euros, switch the chip and the same
+     1000 is euros. */
+  const pcur = draft.currency || (draft.currency = state.cur);
+  const ps = symOf(pcur);
+
   let group = '';
   if (id) {
     const byMonth = draft.cats[id] || (draft.cats[id] = {});
-    const guess = fut.reduce((s,m)=>s+prevTotal(byMonth[m]),0);
-    const fc = forecastCat(Y, id, draft);
+    const fc = forecastCat(Y, id, draft, pcur);
     const py = spendByParent(Y-1)[id];
-    const pavg = py ? Math.abs(py.total)/monthsIn(Y-1) : null;
+    const pavg = py ? Math.abs(C.conv(py.total, state.cur, `${Y-1}-12`, pcur))/monthsIn(Y-1) : null;
     const label = (tax.byId[id]||{}).label||id;
+    /* Two averages side by side: the year so far as it runs, and the year as
+       it will read once the plan is in. Both over the same twelve months, so
+       the difference is the plan and nothing else. */
+    const act = spendByParent(Y)[id] || { rows:[] };
+    const nowTotal = Math.abs(act.rows.reduce((s,r)=>s+C.conv(r.amount,r.currency,r.month,pcur),0));
+    const nowAvg = nowTotal / monthsIn(Y);       // the Activity tile's figure, in the plan's currency
+    const planAvg = fc.total / 12;
     group = `
   <div class="card">
     <h2>${esc(label)}
       <span class="muted" style="text-transform:none;letter-spacing:0">${fut.length} month${fut.length>1?'s':''} to come</span></h2>
-    <div class="hero" style="font-size:26px">${m0(fut.length?guess/fut.length:0)}<span class="muted"
-      style="font-size:13px;font-weight:600"> a month</span></div>
-    <div class="heroSub">${m0(fc.total)} for ${Y}${pavg!==null?` · ${m0(pavg)} a month in ${Y-1}`:''}</div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">Now</div>
+        <div class="v">${m0(nowAvg, ps)}</div>
+        <div class="n">${m0(nowTotal, ps)} so far</div></div>
+      <div class="kpi"><div class="l">Planned</div>
+        <div class="v">${m0(planAvg, ps)}</div>
+        <div class="n">${m0(fc.total, ps)} for ${Y}</div></div>
+    </div>
+    ${pavg!==null?`<div class="heroSub" style="margin-top:8px">${m0(pavg, ps)} a month in ${Y-1}</div>`:''}
 
     ${fut.map((m,i)=>`
     <div class="secttl" style="margin-top:${i?14:16}px">${MON[+m.slice(5,7)-1]}
       <span style="display:flex;gap:6px">
         ${i===0&&fut.length>1?`<button class="gbtn ghost" data-prevcopy="1">copy to all</button>`:''}
+        ${i===0?`<button class="gbtn ${draft.clearArm?'':'ghost'}" style="${draft.clearArm?'background:var(--bad);border-color:var(--bad)':''}"
+          data-prevclear="1">${draft.clearArm?'clear all?':'clear all'}</button>`:''}
         <button class="gbtn" data-prevadd="${m}">+</button>
       </span></div>
     ${(byMonth[m]||[]).map((e,j)=>`
       <div class="row flat">
         <div style="flex:1;min-width:0"><input data-pl="${m}|${j}" value="${esc(e.label||'')}" style="width:100%"></div>
-        <div style="width:88px;margin-left:8px"><input data-pa="${m}|${j}" value="${esc(String(e.amount||''))}"
+        <span class="muted" style="margin-left:8px;font-weight:600">${ps.trim()}</span>
+        <div style="width:80px;margin-left:4px"><input data-pa="${m}|${j}" value="${esc(String(e.amount||''))}"
           inputmode="decimal" style="width:100%;text-align:right"></div>
         <span class="act" data-prevdel="${m}|${j}" style="margin-left:8px">✕</span>
       </div>`).join('')}
     ${(byMonth[m]||[]).length>1?`<div class="row flat"><div><div class="code"
-      style="font-size:12px">Month</div></div><div class="amt"><b>${m0(prevTotal(byMonth[m]))}</b></div></div>`:''}`).join('')}
+      style="font-size:12px">Month</div></div><div class="amt"><b>${m0(prevTotal(byMonth[m]), ps)}</b></div></div>`:''}`).join('')}
   </div>`;
   }
 
   return `
   <div class="card">
     <h2><span class="act" data-prevcancel="1">‹ Activity</span> Prevision ${Y}
-      <span class="muted" style="text-transform:none;letter-spacing:0">${doneN} of ${cats.length}</span></h2>
+      <span style="display:flex;gap:6px;align-items:center">
+        <span class="muted" style="text-transform:none;letter-spacing:0">${doneN} of ${cats.length}</span>
+        ${['EUR','USD'].map((c)=>`<button class="gbtn ${pcur===c?'':'ghost'}" data-prevcur="${c}">${symOf(c).trim()}</button>`).join('')}
+      </span></h2>
     ${cats.length ? `<div class="chips">${cats.map((p)=>
       `<button class="chip ${p.id===id?'on':''} ${prevFilled(draft,p.id)?'done':''}" data-prevcat="${esc(p.id)}">${
         esc(p.label)}</button>`).join('')}</div>`
@@ -1938,8 +1968,11 @@ function tabAccounts(){
      different question entirely. */
   const list = C.latest({ ...opts(), includeClosed:true, asOf:`${Y}-12` });
   /* Everything that existed by then - open, or closed and wearing a lock.
-     An account whose first book is later than Y did not exist yet. */
-  const open = list.filter((a)=>a.created || (a.years||[]).some((y)=>y<=Y));
+     An account whose first book is later than Y did not exist yet, and a
+     closed one sitting at zero with nothing that year has nothing to say. */
+  const busy = new Set(D.ledger.filter((r)=>r.docYear===Y).map((r)=>r.account));
+  const open = list.filter((a)=>(a.created || (a.years||[]).some((y)=>y<=Y))
+    && !(shutIn(a, Y) && Math.abs(a.native)<0.005 && !busy.has(a.code)));
 
   const group = (key) => {
     const mine = open.filter((a)=>a.category===key)
@@ -3135,21 +3168,31 @@ function wire(){
     state.prevDraft = { cat:el.dataset.editprev,
       cats: last ? JSON.parse(JSON.stringify(last.cats)) : {} };
     render(); });
+  /* Any other action disarms a half-pressed "clear all". */
+  const disarm=()=>{ if (state.prevDraft) state.prevDraft.clearArm=false; };
   document.querySelectorAll('[data-prevcat]').forEach((el)=>el.onclick=()=>{
-    syncPrev(); state.prevDraft.cat = el.dataset.prevcat || null; render(); });
+    syncPrev(); disarm(); state.prevDraft.cat = el.dataset.prevcat || null; render(); });
+  document.querySelectorAll('[data-prevcur]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); disarm(); state.prevDraft.currency = el.dataset.prevcur; render(); });
   document.querySelectorAll('[data-prevadd]').forEach((el)=>el.onclick=()=>{
-    syncPrev(); const d=state.prevDraft, m=el.dataset.prevadd;
+    syncPrev(); disarm(); const d=state.prevDraft, m=el.dataset.prevadd;
     const by=d.cats[d.cat]||(d.cats[d.cat]={});
     (by[m]||(by[m]=[])).push({ label:'', amount:'' }); render(); });
   document.querySelectorAll('[data-prevdel]').forEach((el)=>el.onclick=()=>{
-    syncPrev(); const [m,j]=el.dataset.prevdel.split('|');
+    syncPrev(); disarm(); const [m,j]=el.dataset.prevdel.split('|');
     const by=state.prevDraft.cats[state.prevDraft.cat]||{};
     if (by[m]) by[m].splice(+j,1); render(); });
   document.querySelectorAll('[data-prevcopy]').forEach((el)=>el.onclick=()=>{
-    syncPrev(); const d=state.prevDraft, by=d.cats[d.cat]||{};
+    syncPrev(); disarm(); const d=state.prevDraft, by=d.cats[d.cat]||{};
     const fut=futureMonths(state.year); const src=by[fut[0]]||[];
     for (const m of fut.slice(1)) by[m]=JSON.parse(JSON.stringify(src));
     render(); });
+  /* Two taps: the first turns the button red and asks, the second clears
+     every month of the selected category. */
+  document.querySelectorAll('[data-prevclear]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); const d=state.prevDraft;
+    if (!d.clearArm) { d.clearArm=true; render(); return; }
+    d.cats[d.cat]={}; d.clearArm=false; render(); });
   document.querySelectorAll('[data-prevsave]').forEach((el)=>el.onclick=()=>{
     syncPrev(); const d=state.prevDraft;
     const cats=taxonomy().PARENTS.filter((p)=>p.kind==='spend');
@@ -3161,7 +3204,8 @@ function wire(){
       if (!d.cats[c][m].length) delete d.cats[c][m];
     }
     store.previsions=(store.previsions||[]).concat([{
-      id:'p'+Date.now(), year:state.year, created:new Date().toISOString(), cats:d.cats }]);
+      id:'p'+Date.now(), year:state.year, created:new Date().toISOString(),
+      currency:d.currency||state.cur, cats:d.cats }]);
     save(); state.prevDraft=null; state.prevIdx=null; render(); });
   document.querySelectorAll('[data-prevcancel]').forEach((el)=>el.onclick=()=>{
     state.prevDraft=null; render(); });

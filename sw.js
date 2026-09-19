@@ -12,7 +12,7 @@
  */
 /* Bump on every deploy, or an installed phone keeps serving the old app.
    deploy.js does it automatically and refuses to push if it has not. */
-const CACHE = 'ledger-v23';
+const CACHE = 'ledger-v24';
 
 /* The shipped app, and nothing else. data.js and accounts.js are your
    records and are not part of it - the app starts empty and you import. */

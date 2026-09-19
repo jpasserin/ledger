@@ -152,7 +152,10 @@
   .tile.estate {border-top-color:var(--c4);background:rgba(182,131,32,.12)}
   .tile.excluded{border-top-color:var(--c6);background:rgba(124,184,255,.08)}
   .tile.girl   {border-top-color:var(--c5);background:rgba(193,85,186,.13)}
-  .tile.shut   {border-top-color:#3a3f4d;background:rgba(138,146,166,.07);opacity:.62}
+  /* A closed account keeps its colour and gets a lock in the corner. */
+  .tile{position:relative}
+  .tile .lock{position:absolute;top:5px;right:6px;width:10px;height:10px;stroke:var(--muted);
+    fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   /* Spending tiles: name, monthly average, and the change against last year.
      Red means it grew - on a cost, up is the bad direction. */
   /* Sections, coloured by what the spending IS. The label carries the meaning;
@@ -478,7 +481,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="22";
+const APP_VERSION="23";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -1884,14 +1887,25 @@ const isGirl = (a) => (a.owners||[a.owner]).some(isKid);
 /* Category tints the tile; the girls override it to pink wherever they appear;
    closed goes grey. Colour is never the only signal - the key, the owner and
    the position in the list all say the same thing. */
-const tileClass = (a) => a.closed ? 'shut' : isGirl(a) ? 'girl' : (a.category||'cash');
+const tileClass = (a) => isGirl(a) ? 'girl' : (a.category||'cash');
+/* Closed AS OF the year on screen. An account with books is open in the years
+   it has one and locked after its last (or in a gap year) - the registry's
+   `closed` says what it is today, not what it was in 2015. A brand-new one
+   has no books yet: the registry is all there is. */
+const shutIn = (a, Y) => {
+  const ys = a.years||[];
+  if (a.created || !ys.length) return !!a.closed;
+  if (a.closed === false) return false;
+  return !ys.includes(Y);
+};
+const LOCK = `<svg class="lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
 /* The whole number, never abbreviated. "$255k" reads as an estimate and this
    is a balance; four across 352px leaves ~82px, so the type shrinks a step for
    the long ones rather than the number losing its digits. */
 const tileAmt = (v,s) => m0(v,s);
 
 const tile = (a) => { const v=tileAmt(a.native, symOf(a.currency)); return `
-  <div class="tile ${tileClass(a)}" data-acct="${esc(a.code)}">
+  <div class="tile ${tileClass(a)}" data-acct="${esc(a.code)}">${shutIn(a, state.year)?LOCK:''}
     <div class="k">${esc(a.key||a.code)}</div>
     <div class="v${v.length>9?' long':''}${negc(a.native)}">${v}</div>
     ${a.currency!==state.cur
@@ -1923,9 +1937,9 @@ function tabAccounts(){
      held at its end. Looking at 2016 and seeing today's accounts would be a
      different question entirely. */
   const list = C.latest({ ...opts(), includeClosed:true, asOf:`${Y}-12` });
-  const openThen = (a) => a.years.includes(Y) || a.created;
-  const open = list.filter(openThen);
-  const shut = list.filter((a)=>!openThen(a)).sort((x,y)=>Math.abs(y.shown)-Math.abs(x.shown));
+  /* Everything that existed by then - open, or closed and wearing a lock.
+     An account whose first book is later than Y did not exist yet. */
+  const open = list.filter((a)=>a.created || (a.years||[]).some((y)=>y<=Y));
 
   const group = (key) => {
     const mine = open.filter((a)=>a.category===key)
@@ -1962,15 +1976,8 @@ function tabAccounts(){
       <span class="splitkey"><span class="sw tile girl"
         style="width:10px;height:10px;padding:0;border-radius:3px;border-top-width:2px"></span>The girls</span>
     </div>
-    
-  </div>
 
-  ${shut.length?`<div class="card">
-    <h2>Not open in ${Y}
-      <span class="muted" style="text-transform:none;letter-spacing:0">${shut.length}</span></h2>
-    <div class="tiles">${shut.map(tile).join('')}</div>
-    
-  </div>`:''}`;
+  </div>`;
 }
 
 /* ------------------------------------------------------- the account editor --
@@ -2594,6 +2601,8 @@ function checksPage(){
       <span class="muted" style="text-transform:none;letter-spacing:0">${list.length}</span></h2>
       <div class="rows">${list.slice(0,25).map((f)=>`
         <div class="row" data-checkone="${esc(f.id)}">
+          <span class="ck ${(state.selChecks||[]).includes(f.id)?'on':''}" data-selcheck="${esc(f.id)}">${
+            (state.selChecks||[]).includes(f.id)?'✓':''}</span>
           <div style="flex:1;min-width:0">
             <div class="code" style="font-size:12.5px">${esc(f.title)}</div>
             <div class="sub">${f.date?esc(f.date):''}${f.account?' · '+esc(f.account):''}</div></div>
@@ -2601,7 +2610,11 @@ function checksPage(){
         </div>`).join('')}</div>
       ${list.length>25?`<div class="hint">+ ${list.length-25} more.</div>`:''}
     </div>`).join('')}
-  ${!l.length?`<div class="card"><div class="hint" style="margin-top:0">Nothing to check.</div></div>`:''}`;
+  ${!l.length?`<div class="card"><div class="hint" style="margin-top:0">Nothing to check.</div></div>`:''}
+  ${(state.selChecks||[]).length?`<div class="selbar">
+    <span>${state.selChecks.length} selected</span>
+    <button class="gbtn" data-okchecks="1">Mark correct</button>
+    <button class="gbtn ghost" data-selclear="1">✕</button></div>`:''}`;
 }
 
 function checkOne(){
@@ -3047,14 +3060,15 @@ function renderYearBar(){
    on the SAME screen must not animate and must not scroll to the top - that
    is the jump. Only actually going somewhere does either. */
 const screenKey = () => [state.tab, state.account||'', state.spendCat||'',
-  state.entry?'entry':'', state.editing?'edit':'', state.prevDraft?'prev':''].join('|');
+  state.entry?'entry':'', state.editing?'edit':'', state.prevDraft?'prev':'',
+  state.checks?'checks':'', state.check||''].join('|');
 let lastScreen = null;
 
 function render(){
   const key = screenKey();
   const moved = key !== lastScreen;
   lastScreen = key;
-  if (moved) { state.selOps=[]; state.bulk=null; }   // a selection belongs to one screen
+  if (moved) { state.selOps=[]; state.selChecks=[]; state.bulk=null; }   // a selection belongs to one screen
   renderNav();
   renderStamp();
   renderYearBar();
@@ -3308,6 +3322,14 @@ function wire(){
     state.check=null; render(); });
   document.querySelectorAll('[data-okcheck]').forEach((el)=>el.onclick=()=>{
     dismissed().push(el.dataset.okcheck); save(); state.check=null; render(); });
+  document.querySelectorAll('[data-selcheck]').forEach((el)=>el.onclick=(e)=>{
+    if (e && e.stopPropagation) e.stopPropagation();       // the row would open the finding
+    const s=state.selChecks||[], id=el.dataset.selcheck;
+    state.selChecks = s.includes(id) ? s.filter((x)=>x!==id) : [...s, id];
+    render(); });
+  document.querySelectorAll('[data-okchecks]').forEach((el)=>el.onclick=()=>{
+    for (const id of state.selChecks||[]) if (!dismissed().includes(id)) dismissed().push(id);
+    state.selChecks=[]; save(); render(); });
   document.querySelectorAll('[data-uncheck]').forEach((el)=>el.onclick=()=>{
     store.dismissed = dismissed().filter((x)=>x!==el.dataset.uncheck);
     save(); state.check=null; render(); });
@@ -3576,7 +3598,7 @@ function wire(){
     if (!state.selOps.length) state.bulk=null;
     render(); });
   document.querySelectorAll('[data-selclear]').forEach((el)=>el.onclick=()=>{
-    state.selOps=[]; state.bulk=null; render(); });
+    state.selOps=[]; state.selChecks=[]; state.bulk=null; render(); });
   document.querySelectorAll('[data-bulk]').forEach((el)=>el.onclick=()=>{
     state.bulk=el.dataset.bulk; render(); });
   document.querySelectorAll('[data-bulkapply]').forEach((el)=>el.onclick=()=>{

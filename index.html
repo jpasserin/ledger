@@ -447,7 +447,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="16";
+const APP_VERSION="17";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */

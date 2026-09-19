@@ -172,6 +172,15 @@
   .tile.cat.opt{border-top-color:var(--warn);background:rgba(251,191,36,.09)}
   .tile.cat.inc{border-top-color:var(--good);background:rgba(74,222,128,.08)}
   .tile.cat .s.up{color:var(--bad);font-weight:700}
+  .tile.cat.oth{border-top-color:var(--muted)}
+  .tiles.three{grid-template-columns:repeat(3,1fr)}
+  /* A category's tags, as capsules in the colour of what the category IS. */
+  .caps{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .cap{font-size:11px;font-weight:600;border-radius:14px;padding:3px 9px;border:1px solid var(--line);
+    color:var(--muted);background:rgba(255,255,255,.03)}
+  .cap.ess{color:var(--accent);border-color:var(--accent);background:rgba(59,130,246,.12)}
+  .cap.opt{color:var(--warn);border-color:var(--warn);background:rgba(251,191,36,.12)}
+  .cap.inc{color:var(--good);border-color:var(--good);background:rgba(74,222,128,.10)}
   .tile.cat .s.down{color:var(--good);font-weight:700}
   /* Two overlaid sliders make a range control. A native range input is the
      one thing on a phone that is already the right size for a thumb. */
@@ -297,6 +306,7 @@
   svg.chart{display:block;width:100%;height:auto;overflow:visible}
   .gl{stroke:var(--line);stroke-width:1}
   .tick{fill:var(--muted);font-size:9.5px}
+  .tick.sel{fill:#fff;font-weight:700}
   .vlab{fill:var(--txt);font-size:9.5px;font-weight:700}
   .vlab.sm{font-size:8px;font-weight:600;letter-spacing:-.2px}
   .legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:10px;font-size:11.5px;color:var(--muted)}
@@ -450,7 +460,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="19";
+const APP_VERSION="20";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -599,7 +609,7 @@ function recomputeClock(){
 recomputeClock();
 
 
-const state = { cur:'USD', tab:'year', account:null, editing:false, spendMonth:null,
+const state = { cur:'USD', tab:'year', account:null, editing:false, spendMonths:[],
   year:YEAR, cmpA:YEARS[0], cmpB:YEAR, bill:null,
   openTag:null, settings:'data', tagPick:null, ownerEdit:null, entry:null, series:'total', wsel:'all',
   opFilter:{ q:'', tag:'', subtag:'', from:'', to:'', min:'', max:'', oneoff:false,
@@ -680,28 +690,29 @@ function columns({ labels, values, diverging, color, height, precise, keys, data
   const zero = diverging ? T+ih/2 : T+ih;
   const scale = diverging ? (ih/2)/max : ih/max;
   const fmt = precise ? kk2 : kk;
+  /* One key or several: a selected column is drawn white with no outline and
+     its month label goes white with it. */
+  const selSet = new Set(Array.isArray(selected) ? selected : selected!==undefined ? [selected] : []);
   let g=`<line class="gl" x1="0" y1="${zero}" x2="${W}" y2="${zero}"/>`;
   labels.forEach((lab,i)=>{
     const v=values[i]||0, cx=L+step*i+step/2, h=Math.abs(v)*scale;
     const up=v>=0, y=up? zero-h : zero;
-    /* The selected column is the only one in the accent colour, so which month
-       the list below belongs to is never in doubt. */
-    const isSel = selected!==undefined && keys && keys[i]===selected;
-    const col = isSel ? 'var(--accent)'
+    const isSel = keys && selSet.has(keys[i]);
+    const col = isSel ? '#fff'
       : diverging ? (up?'var(--accent)':'var(--bad)') : `var(${color||'--c1'})`;
-    /* A hit area the full height of the plot, not just the bar. A February
-       with almost nothing in it is a two-pixel target otherwise. */
+    /* A hit area the full height of the chart, label included, not just the
+       bar. A February with almost nothing in it is a two-pixel target
+       otherwise, and the month name underneath is a target too. */
     const hit = keys && dataAttr
-      ? `<rect x="${(cx-step/2).toFixed(1)}" y="${T}" width="${step.toFixed(1)}" height="${ih.toFixed(1)}"
+      ? `<rect x="${(cx-step/2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${H}"
           fill="transparent" style="cursor:pointer" ${dataAttr}="${esc(keys[i])}"/>` : '';
     g+=hit;
     if (h>0.4) g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}"
-      height="${Math.max(2,h).toFixed(1)}" rx="3" fill="${col}" pointer-events="none"${
-        isSel?' stroke="#fff" stroke-width="1.5"':''}/>`;
+      height="${Math.max(2,h).toFixed(1)}" rx="3" fill="${col}" pointer-events="none"/>`;
     if (Math.abs(v) > max*0.06)
       g+=`<text class="vlab${precise?' sm':''}" x="${cx.toFixed(1)}" y="${(up? y-3.5 : y+h+9).toFixed(1)}"
         text-anchor="middle" pointer-events="none">${fmt(v)}</text>`;
-    g+=`<text class="tick" x="${cx.toFixed(1)}" y="${H-4}" text-anchor="middle"
+    g+=`<text class="tick${isSel?' sel':''}" x="${cx.toFixed(1)}" y="${H-4}" text-anchor="middle"
       pointer-events="none">${esc(lab)}</text>`;
   });
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
@@ -814,8 +825,13 @@ function renderNav(){
         <svg viewBox="0 0 24 24">${ic}</svg>
         ${id==='accounts'&&warn?`<span class="navwarn">${warn>99?'99+':warn}</span>`:''}
       </span>${label}</button>`).join('');
+  /* A tab opens at its top. Every drill-down - an account, a category, a
+     budget, an entry being edited - is dropped, or Activity would reopen on
+     the budget you left it on. */
   document.querySelectorAll('nav button').forEach((b)=>b.onclick=()=>{
-    state.tab=b.dataset.tab; state.account=null; render();
+    state.tab=b.dataset.tab; state.account=null; state.entry=null; state.editing=false;
+    state.spendCat=null; state.spendMonths=[]; state.budget=null; state.budgetEdit=null;
+    state.prevDraft=null; state.checks=false; render();
   });
 }
 
@@ -1323,6 +1339,10 @@ const SPEND_SECTIONS = [
   { cls:'savings',   label:'Savings',   tone:'inc' },
   { cls:'tax',       label:'Taxes',     tone:'inc' },
 ];
+/* The colour of what a category IS - the same one on its tile, its tags'
+   capsules and its bars, so the type reads without a legend. */
+const toneOf = (cls) => (SPEND_SECTIONS.find((s)=>s.cls===cls) || { tone:'oth' }).tone;
+const TONE_COLOR = { ess:'--accent', opt:'--warn', inc:'--good', oth:'--muted' };
 
 /* The month-by-month flow tables. They lived on Year, where they competed with
    the net-worth picture; here they sit with the rest of the activity. */
@@ -1380,6 +1400,9 @@ function flowTables(Y){
 
 
 function tabSpend(){
+  /* Tapping an entry in a category's list edits it here, the way it does on
+     the account - the same form, and Back returns to the category. */
+  if (state.entry) return entryForm();
   if (state.budgetEdit) return budgetForm();
   if (state.budget) return budgetDetail(state.budget);
   if (state.prevDraft) return previsionEditor();
@@ -1392,28 +1415,40 @@ function tabSpend(){
     .map((p)=>{
       const avg = Math.abs((now[p.id]||{total:0}).total)/div;
       const pavg = prev[p.id] ? Math.abs(prev[p.id].total)/pdiv : null;
-      return { p, avg, pavg, diff: pavg===null?null:avg-pavg };
+      return { p, avg, pavg, diff: pavg===null?null:avg-pavg, tone: toneOf(p.cls) };
     });
+  /* One grid, in type order - Necessary, Optional, Other, then the money-in
+     kinds - so the colours cluster without rules between them. */
+  const order = SPEND_SECTIONS.map((s)=>s.cls);
+  cells.sort((a,b)=>order.indexOf(a.p.cls||'other')-order.indexOf(b.p.cls||'other'));
   const grand = cells.reduce((s,c)=>s+c.avg,0);
+  /* The year's total per type, signed then shown positive - a refund inside
+     Necessary reduces Necessary. */
+  const sums = {};
+  for (const p of tax.PARENTS) if (now[p.id]) sums[p.cls] = (sums[p.cls]||0) + now[p.id].total;
 
   return `
   <div class="card">
-    <h2>Spending
+    <h2>Activity
       <span class="muted" style="text-transform:none;letter-spacing:0">${m0(grand)}/mo</span></h2>
-    ${SPEND_SECTIONS.map((sec)=>{
-      const mine = cells.filter((c)=>(c.p.cls||'other')===sec.cls);
-      if (!mine.length) return '';
-      const tot = mine.reduce((t,c)=>t+c.avg,0);
-      return `<div class="secttl ${sec.tone}">${esc(sec.label)}<span>${m0(tot)}/mo</span></div>
-      <div class="tiles">${mine.map((c)=>`
-        <div class="tile cat ${sec.tone}" data-opencat="${esc(c.p.id)}">
-          <div class="k">${esc(c.p.label)}</div>
-          <div class="v">${m0(c.avg)}</div>
-          <div class="s ${c.diff===null?'':c.diff>0?'up':'down'}">${
-            c.diff===null ? '—'
-            : (c.diff>0?'+':'−')+m0(Math.abs(c.diff)).replace(/^[-+]/,'')}</div>
-        </div>`).join('')}</div>`;
-    }).join('')}
+    ${cells.length ? `<div class="tiles">${cells.map((c)=>`
+      <div class="tile cat ${c.tone}" data-opencat="${esc(c.p.id)}">
+        <div class="k">${esc(c.p.label)}</div>
+        <div class="v">${m0(c.avg)}</div>
+        <div class="s ${c.diff===null?'':c.diff>0?'up':'down'}">${
+          c.diff===null ? '—'
+          : (c.diff>0?'+':'−')+m0(Math.abs(c.diff)).replace(/^[-+]/,'')}</div>
+      </div>`).join('')}</div>`
+    : `<div class="hint" style="margin-top:0">Nothing in ${Y}.</div>`}
+  </div>
+
+  <div class="card">
+    <h2>Totals <span class="muted" style="text-transform:none;letter-spacing:0">${Y}</span></h2>
+    <div class="tiles three">${SPEND_SECTIONS.map((sec)=>`
+      <div class="tile cat ${sec.tone}">
+        <div class="k">${esc(sec.label)}</div>
+        <div class="v">${m0(Math.abs(sums[sec.cls]||0))}</div>
+      </div>`).join('')}</div>
   </div>
 
   ${previsionCard(Y)}
@@ -1431,38 +1466,41 @@ function spendDetail(id){
   const label = (tax.byId[id]||{}).label || id;
   const data = spendByParent(Y)[id] || { total:0, months:{}, rows:[] };
   const ms = Object.keys(data.months).sort();
-  const sel = state.spendMonth && ms.includes(state.spendMonth) ? state.spendMonth : null;
+  /* Several months at once; none selected means every entry. */
+  const sel = (state.spendMonths||[]).filter((m)=>ms.includes(m)).sort();
   const div = monthsIn(Y);
   const prev = spendByParent(Y-1)[id];
   const pavg = prev ? Math.abs(prev.total)/monthsIn(Y-1) : null;
   const avg = Math.abs(data.total)/div;
+  const tone = toneOf((tax.byId[id]||{}).cls);
+  const tags = Object.keys(tax.OF).filter((t)=>tax.OF[t]===id).sort();
 
-  const base = sel ? data.rows.filter((r)=>r.month===sel) : data.rows;
+  const base = sel.length ? data.rows.filter((r)=>sel.includes(r.month)) : data.rows;
   const list = filterOps(base);
 
   return `
   <div class="card">
-    <h2><span class="act" data-backcat="1">‹ Spending</span> ${esc(label)}</h2>
+    <h2><span class="act" data-backcat="1">‹ Activity</span> ${esc(label)}</h2>
     <div class="hero">${m0(Math.abs(data.total))}</div>
     <div class="heroSub">${Y} · ${m0(avg)} a month${
       pavg!==null?` · <b style="color:${avg>pavg?'var(--bad)':'var(--good)'}">${
         avg>pavg?'+':'−'}${m0(Math.abs(avg-pavg)).replace(/^[-+]/,'')}</b> against ${Y-1}`:''}</div>
+    ${tags.length?`<div class="caps">${tags.map((t)=>
+      `<span class="cap ${tone}">${esc(tagName(t))}</span>`).join('')}</div>`:''}
   </div>
 
   <div class="card">
-    <h2>By month${sel?` <button class="gbtn ghost" data-monthclear="1">All</button>`:''}</h2>
+    <h2>By month</h2>
     ${ms.length ? columns({ labels:ms.map(mLabel), values:ms.map((m)=>Math.abs(data.months[m])),
-        color:'--c2', height:150, precise:true, keys:ms, dataAttr:'data-pickmonth',
-        selected: sel||undefined })
+        color:TONE_COLOR[tone], height:150, precise:true, keys:ms, dataAttr:'data-pickmonth',
+        selected: sel })
       : `<div class="hint">Nothing in ${Y}.</div>`}
-    <div class="hint" style="margin-top:2px">${sel
-      ? `Showing ${MON[+sel.slice(5,7)-1]} only.` : 'Tap a month to filter the list below.'}</div>
   </div>
 
   ${opFilterCard(base, list.length)}
 
   <div class="card">
-    <h2>${sel?MON[+sel.slice(5,7)-1]+' '+Y:'Every entry'}
+    <h2>${sel.length?sel.map((m)=>MON[+m.slice(5,7)-1]).join(', ')+' '+Y:'Every entry'}
       <span class="muted" style="text-transform:none;letter-spacing:0">${list.length}</span></h2>
     <div class="rows">${list.slice(0,200).map((r)=>{
       const v = C.conv(r.amount,r.currency,r.month,state.cur);
@@ -2975,14 +3013,13 @@ function wire(){
     state.year=+el.dataset.year; render(); });
   /* ---- Spend: tiles, the category page, previsions ---- */
   document.querySelectorAll('[data-opencat]').forEach((el)=>el.onclick=()=>{
-    state.spendCat=el.dataset.opencat; state.spendMonth=null; render(); });
+    state.spendCat=el.dataset.opencat; state.spendMonths=[]; render(); });
   document.querySelectorAll('[data-backcat]').forEach((el)=>el.onclick=()=>{
-    state.spendCat=null; state.spendMonth=null; render(); });
-  document.querySelectorAll('[data-pickmonth]').forEach((el)=>el.onclick=()=>{
-    state.spendMonth = state.spendMonth===el.dataset.pickmonth ? null : el.dataset.pickmonth;
-    render(); });
-  document.querySelectorAll('[data-monthclear]').forEach((el)=>el.onclick=()=>{
-    state.spendMonth=null; render(); });
+    state.spendCat=null; state.spendMonths=[]; render(); });
+  /* A bar - or the month under it - toggles that month in or out of the set. */
+  const toggleMonth=(m)=>{ const s=state.spendMonths||[];
+    state.spendMonths = s.includes(m) ? s.filter((x)=>x!==m) : [...s, m]; render(); };
+  document.querySelectorAll('[data-pickmonth]').forEach((el)=>el.onclick=()=>toggleMonth(el.dataset.pickmonth));
 
   const syncPrev=()=>{ const d=state.prevDraft; if(!d||!d.cat) return;
     const by=d.cats[d.cat]||{};
@@ -3506,8 +3543,7 @@ function wire(){
   document.querySelectorAll('[data-go]').forEach((el)=>el.onclick=()=>{ state.tab=el.dataset.go; render(); });
   document.querySelectorAll('[data-go-import]').forEach((el)=>el.onclick=()=>{
     state.settings='data'; state.tab='settings'; state.setPage=null; render(); });
-  document.querySelectorAll('[data-month]').forEach((el)=>el.onclick=()=>{
-    state.spendMonth = state.spendMonth===el.dataset.month ? null : el.dataset.month; render(); });
+  document.querySelectorAll('[data-month]').forEach((el)=>el.onclick=()=>toggleMonth(el.dataset.month));
   document.querySelectorAll('[data-bill]').forEach((el)=>el.onclick=()=>{ state.bill=el.dataset.bill; render(); });
   document.querySelectorAll('[data-girls]').forEach((el)=>el.onclick=()=>{
     const kids = Object.keys(OWNERS()).filter(isKid);
@@ -3561,7 +3597,7 @@ function readHash(){
      screenshotted like any tab. */
   if (q.get('settings')) { state.settings = q.get('settings'); state.tab='settings'; }
   if (q.get('check')) { state.checks = true; state.tab = 'accounts'; }
-  if (q.get('month')) state.spendMonth=q.get('month');
+  if (q.get('month')) state.spendMonths=[q.get('month')];
   document.querySelectorAll('#curTog button').forEach((x)=>x.classList.toggle('on', x.dataset.cur===state.cur));
 }
 addEventListener('hashchange', ()=>{ readHash(); render(); });

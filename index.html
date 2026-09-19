@@ -230,6 +230,9 @@
   .chip{background:var(--card2);border:1px solid var(--line);border-radius:18px;padding:5px 11px;
     font-size:12px;color:var(--muted);cursor:pointer}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  /* A category whose plan is filled in: green, so what is left to do is visible. */
+  .chip.done{border-color:var(--good);color:var(--good)}
+  .chip.done.on{background:var(--good);color:#fff}
   .chip.pink.on{background:var(--c5);border-color:var(--c5)}
   .btn{display:block;width:100%;text-align:center;background:var(--card2);border:1px solid var(--line);
     color:var(--txt);border-radius:12px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;
@@ -460,7 +463,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="20";
+const APP_VERSION="21";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -1742,62 +1745,80 @@ function previsionCard(Y){
   </div>`;
 }
 
-/* Entering a plan: one category, the months still to come, free-text lines so
-   "Gymnastics 300 / Dance 800" stays legible next year when you have
-   forgotten what the 1,100 was. */
+/* A line counts once it carries a number - and 0 is a number, because "nothing
+   more this year" is a decision, not an omission. */
+const prevLineFilled = (e) => String(e.amount).trim()!=='' && isFinite(+e.amount);
+/* A category is filled when at least one month still to come has a line. */
+const prevFilled = (draft, id) => Object.values((draft.cats||{})[id]||{})
+  .some((lines)=>(lines||[]).some(prevLineFilled));
+
+/* Entering a plan: ONE page. The categories across the top, the selected
+   one's months underneath, Save at the bottom - which stays off until every
+   category has been filled in, because a prevision with a category missing is
+   a smaller number than the year will be, and that is the wrong way to be
+   wrong. Free-text lines so "Gymnastics 300 / Dance 800" stays legible next
+   year when you have forgotten what the 1,100 was. */
 function previsionEditor(){
   const Y = state.year;
   const tax = taxonomy();
   const draft = state.prevDraft;
-  const id = draft.cat;
   const cats = tax.PARENTS.filter((p)=>p.kind==='spend');
-
-  if (!id) return `
-    <div class="card">
-      <h2><span class="act" data-prevcancel="1">‹ Activity</span> Plan what?</h2>
-      <div class="chips">${cats.map((p)=>
-        `<button class="chip" data-prevcat="${esc(p.id)}">${esc(p.label)}</button>`).join('')}</div>
-      
-    </div>`;
-
+  const id = draft.cat && cats.some((p)=>p.id===draft.cat) ? draft.cat : null;
   const fut = futureMonths(Y);
-  const byMonth = draft.cats[id] || (draft.cats[id] = {});
-  const total = fut.reduce((s,m)=>s+prevTotal(byMonth[m]),0);
-  const label = (tax.byId[id]||{}).label||id;
+  const doneN = cats.filter((p)=>prevFilled(draft,p.id)).length;
+  const allDone = cats.length>0 && doneN===cats.length;
 
-  return `
+  let group = '';
+  if (id) {
+    const byMonth = draft.cats[id] || (draft.cats[id] = {});
+    const guess = fut.reduce((s,m)=>s+prevTotal(byMonth[m]),0);
+    const fc = forecastCat(Y, id, draft);
+    const py = spendByParent(Y-1)[id];
+    const pavg = py ? Math.abs(py.total)/monthsIn(Y-1) : null;
+    const label = (tax.byId[id]||{}).label||id;
+    group = `
   <div class="card">
-    <h2><span class="act" data-prevcat="">‹ Category</span> ${esc(label)}</h2>
-    <div class="hero" style="font-size:26px">${m0(total)}</div>
-    <div class="heroSub">${fut.length} month${fut.length>1?'s':''} still to come in ${Y}</div>
-  </div>
+    <h2>${esc(label)}
+      <span class="muted" style="text-transform:none;letter-spacing:0">${fut.length} month${fut.length>1?'s':''} to come</span></h2>
+    <div class="hero" style="font-size:26px">${m0(fut.length?guess/fut.length:0)}<span class="muted"
+      style="font-size:13px;font-weight:600"> a month</span></div>
+    <div class="heroSub">${m0(fc.total)} for ${Y}${pavg!==null?` · ${m0(pavg)} a month in ${Y-1}`:''}</div>
 
-  ${fut.map((m,i)=>`
-  <div class="card">
-    <h2>${MON[+m.slice(5,7)-1]}
-      <span>
-        ${i===0?`<button class="gbtn ghost" data-prevcopy="1">copy to all</button>`:''}
+    ${fut.map((m,i)=>`
+    <div class="secttl" style="margin-top:${i?14:16}px">${MON[+m.slice(5,7)-1]}
+      <span style="display:flex;gap:6px">
+        ${i===0&&fut.length>1?`<button class="gbtn ghost" data-prevcopy="1">copy to all</button>`:''}
         <button class="gbtn" data-prevadd="${m}">+</button>
-      </span></h2>
-    ${(byMonth[m]||[]).length ? (byMonth[m]||[]).map((e,j)=>`
+      </span></div>
+    ${(byMonth[m]||[]).map((e,j)=>`
       <div class="row flat">
-        <div style="flex:1;min-width:0"><input data-pl="${m}|${j}" value="${esc(e.label||'')}"
-          placeholder="what for" style="width:100%"></div>
+        <div style="flex:1;min-width:0"><input data-pl="${m}|${j}" value="${esc(e.label||'')}" style="width:100%"></div>
         <div style="width:88px;margin-left:8px"><input data-pa="${m}|${j}" value="${esc(String(e.amount||''))}"
           inputmode="decimal" style="width:100%;text-align:right"></div>
         <span class="act" data-prevdel="${m}|${j}" style="margin-left:8px">✕</span>
-      </div>`).join('')
-    : `<div class="hint" style="margin-top:0">Nothing planned.</div>`}
+      </div>`).join('')}
     ${(byMonth[m]||[]).length>1?`<div class="row flat"><div><div class="code"
-      style="font-size:12px">Month</div></div><div class="amt"><b>${m0(prevTotal(byMonth[m]))}</b></div></div>`:''}
-  </div>`).join('')}
+      style="font-size:12px">Month</div></div><div class="amt"><b>${m0(prevTotal(byMonth[m]))}</b></div></div>`:''}`).join('')}
+  </div>`;
+  }
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-prevcancel="1">‹ Activity</span> Prevision ${Y}
+      <span class="muted" style="text-transform:none;letter-spacing:0">${doneN} of ${cats.length}</span></h2>
+    ${cats.length ? `<div class="chips">${cats.map((p)=>
+      `<button class="chip ${p.id===id?'on':''} ${prevFilled(draft,p.id)?'done':''}" data-prevcat="${esc(p.id)}">${
+        esc(p.label)}</button>`).join('')}</div>`
+    : `<div class="hint" style="margin-top:0">No categories.</div>`}
+  </div>
+
+  ${group}
 
   <div class="card">
     <div class="btnrow">
-      <button class="btn primary" data-prevsave="1">Save prevision</button>
+      <button class="btn primary" data-prevsave="1" ${allDone?'':'disabled'}>Save</button>
       <button class="btn" data-prevcancel="1">Cancel</button>
     </div>
-    
   </div>`;
 }
 
@@ -3033,7 +3054,8 @@ function wire(){
     /* Start from the last plan for this year. Re-typing a budget you have
        already thought about is how a planning feature stops being used. */
     const last = prevList(state.year).slice(-1)[0];
-    state.prevDraft = { cat:null, cats: last ? JSON.parse(JSON.stringify(last.cats)) : {} };
+    const first = taxonomy().PARENTS.find((p)=>p.kind==='spend');
+    state.prevDraft = { cat: first ? first.id : null, cats: last ? JSON.parse(JSON.stringify(last.cats)) : {} };
     render(); });
   document.querySelectorAll('[data-editprev]').forEach((el)=>el.onclick=()=>{
     const last = prevList(state.year).slice(-1)[0];
@@ -3057,9 +3079,12 @@ function wire(){
     render(); });
   document.querySelectorAll('[data-prevsave]').forEach((el)=>el.onclick=()=>{
     syncPrev(); const d=state.prevDraft;
-    /* Drop blank lines rather than saving rows of nothing. */
+    const cats=taxonomy().PARENTS.filter((p)=>p.kind==='spend');
+    const missing=cats.filter((p)=>!prevFilled(d,p.id));
+    if (missing.length) { alert('Still to fill: '+missing.map((p)=>p.label).join(', ')+'.'); return; }
+    /* Drop blank lines rather than saving rows of nothing; a 0 stays. */
     for (const c of Object.keys(d.cats)) for (const m of Object.keys(d.cats[c])) {
-      d.cats[c][m]=d.cats[c][m].filter((e)=>+e.amount);
+      d.cats[c][m]=d.cats[c][m].filter(prevLineFilled).map((e)=>({ label:e.label, amount:+e.amount }));
       if (!d.cats[c][m].length) delete d.cats[c][m];
     }
     store.previsions=(store.previsions||[]).concat([{

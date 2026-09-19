@@ -90,6 +90,9 @@
     cursor:pointer;font-size:12px;}
   .hint{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px;}
   .muted{color:var(--muted)}
+  /* A balance below zero is red wherever it is shown - an overdraft or a
+     card owing is the one figure that must not read like the others. */
+  .neg{color:var(--bad)!important}
 
   .hero{font-size:34px;font-weight:800;letter-spacing:-.5px;line-height:1.05;}
   .heroSub{color:var(--muted);font-size:12.5px;margin-top:5px;}
@@ -447,7 +450,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="18";
+const APP_VERSION="19";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -619,6 +622,8 @@ function m0(v,s){ const r=Math.round(Math.abs(v));
   return (v<0&&r!==0?'-':'')+(s||sym())+r.toLocaleString('en-US'); }
 function m2(v,s){ const n=Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   return (v<0?'-':'')+(s||sym())+n; }
+/* Class suffix for a balance: red below zero, nothing otherwise. */
+const negc = (v) => (v < -0.005 ? ' neg' : '');
 const kk = (v) => { const a=Math.abs(v);
   return (a>=1e6? (v/1e6).toFixed(a>=1e7?0:1)+'M' : a>=1000? (v/1000).toFixed(a>=1e4?0:1)+'k' : Math.round(v)+''); };
 /* Short, with the decimals that carry information. 1.88k rather than 1.9k,
@@ -1774,9 +1779,9 @@ const tileAmt = (v,s) => m0(v,s);
 const tile = (a) => { const v=tileAmt(a.native, symOf(a.currency)); return `
   <div class="tile ${tileClass(a)}" data-acct="${esc(a.code)}">
     <div class="k">${esc(a.key||a.code)}</div>
-    <div class="v${v.length>9?' long':''}">${v}</div>
+    <div class="v${v.length>9?' long':''}${negc(a.native)}">${v}</div>
     ${a.currency!==state.cur
-      ? `<div class="s alt2">(${tileAmt(a.shown, sym())})</div>`
+      ? `<div class="s alt2${negc(a.shown)}">(${tileAmt(a.shown, sym())})</div>`
       : `<div class="s">${esc(a.bank || a.subtype || '')}</div>`}
   </div>`; };
 
@@ -1788,8 +1793,9 @@ function currencyBlocks(list){
     .sort((x,y)=>(CURORDER.indexOf(x)+9)%99 - (CURORDER.indexOf(y)+9)%99);
   return seen.map((c)=>{
     const mine = list.filter((a)=>a.currency===c);
+    const sum = mine.reduce((s,a)=>s+a.shown,0);
     return `<div class="sep">${c==='EUR'?'Euro':c==='USD'?'Dollar':esc(c)}
-      <span>${m0(mine.reduce((s,a)=>s+a.shown,0))}</span></div>${mine.map(tile).join('')}`;
+      <span class="${negc(sum).trim()}">${m0(sum)}</span></div>${mine.map(tile).join('')}`;
   }).join('');
 }
 
@@ -2138,8 +2144,8 @@ function accountDetail(code){
   <div class="card">
     <h2><span class="act" data-back="1">‹ Accounts</span>
       <button class="gbtn ghost" data-edit="${esc(code)}">Edit</button></h2>
-    <div class="hero" style="margin-top:2px">${m0(lat?lat.native:0, s)}</div>
-    ${a.currency!==state.cur?`<div class="heroSub" style="font-size:15px;color:var(--txt)">(${
+    <div class="hero${negc(lat?lat.native:0)}" style="margin-top:2px">${m0(lat?lat.native:0, s)}</div>
+    ${a.currency!==state.cur?`<div class="heroSub${negc(lat?lat.shown:0)}" style="font-size:15px;color:var(--txt)">(${
       m0(lat?lat.shown:0)})</div>`:''}
     <div class="heroSub"><b style="color:var(--txt)">${esc(a.key||code)}</b>${
       a.bank?' · '+esc(a.bank):''} · ${esc(a.ownerName)}${
@@ -2401,7 +2407,7 @@ function tabGirls(){
   return `
   <div class="card">
     <h2>Kids <span class="muted" style="text-transform:none;letter-spacing:0">end of ${state.year}</span></h2>
-    <div class="hero">${m0(total)}</div>
+    <div class="hero${negc(total)}">${m0(total)}</div>
     <div class="heroSub">${kids.reduce((n,k)=>n+k.accounts.length,0)} accounts you manage for
       ${kids.map((k)=>esc(k.name)).join(' and ')}</div>
   </div>
@@ -2414,7 +2420,7 @@ function tabGirls(){
       <h2>${esc(k.name)}
         <button class="gbtn" data-newkid="${k.code}" title="New account">+</button></h2>
       ${open.length?`
-        <div class="hero" style="font-size:24px">${m0(sum)}</div>
+        <div class="hero${negc(sum)}" style="font-size:24px">${m0(sum)}</div>
         <div class="heroSub" style="margin-bottom:12px">${open.length} account${open.length>1?'s':''}
           open in ${state.year}</div>
         <div class="rows">${open.map((a)=>`
@@ -2423,8 +2429,8 @@ function tabGirls(){
               <div class="sub">${esc(a.bank||a.subtype||'')}${
                 a.owners&&a.owners.length>1?' · shared with '+a.owners.filter((x)=>x!==k.code)
                   .map((x)=>esc(OWNERS()[x]||x)).join(', '):''}</div></div>
-            <div class="amt"><b>${m0(a.native, symOf(a.currency))}</b>
-              ${a.currency!==state.cur?`<span class="alt">${m0(a.shown)}</span>`:''}</div>
+            <div class="amt"><b class="${negc(a.native).trim()}">${m0(a.native, symOf(a.currency))}</b>
+              ${a.currency!==state.cur?`<span class="alt${negc(a.shown)}">${m0(a.shown)}</span>`:''}</div>
           </div>`).join('')}</div>`
         : `<div class="hint" style="margin-top:0">No account open in ${state.year}.</div>`}
       ${shut.length?`<div class="hint">${shut.map((a)=>esc(a.key||a.code)).join(', ')} —
@@ -2628,7 +2634,7 @@ function restLine(e){
   return `${e.group?esc(tagName(e.group)):'—'} <b style="${rest>0?'':'color:var(--bad)'}">${m2(rest,s)}</b>`;
 }
 
-const SETTINGS_TABS = [['data','Data'],['owners','People'],['cats','Categories'],['about','About']];
+const SETTINGS_TABS = [['data','Data'],['owners','People'],['cats','Categories'],['fx','Currency'],['about','About']];
 
 function tabSettings(){
   if (state.setPage) return setPage();
@@ -2638,7 +2644,33 @@ function tabSettings(){
     `<button class="pill ${which===id?'on':''}" data-set="${id}">${label}</button>`).join('')}</div>
   ${which==='data' ? settingsData()
     : which==='owners' ? settingsOwners()
-    : which==='cats' ? settingsCats() : settingsAbout()}`;
+    : which==='cats' ? settingsCats()
+    : which==='fx' ? settingsFx() : settingsAbout()}`;
+}
+
+/* -------------------------------------------------------------- Currency --
+
+   The month-end rates the conversions run on, for the year in the top bar.
+   A month with no rate of its own borrows the latest before it and is shown
+   muted, because a borrowed rate is a guess the sums are quietly built on. */
+function settingsFx(){
+  const Y = state.year;
+  const has = C.hasRates();
+  return `
+  <div class="card">
+    <h2>Currency <span class="muted" style="text-transform:none;letter-spacing:0">${Y}</span></h2>
+    ${!has?`<div class="hint" style="margin-top:0">No rates.</div>`:''}
+    <table>
+      <thead><tr><th style="text-align:left">Month</th><th>1 € in $</th><th>1 $ in €</th></tr></thead>
+      <tbody>${MON.map((name,i)=>{
+        const m = `${Y}-${String(i+1).padStart(2,'0')}`;
+        const own = !!((D.fx||{})[m] && D.fx[m].usdPerEur);
+        const r = C.rate(m);
+        return `<tr${own?'':' class="muted"'}><td style="text-align:left">${name}</td>
+          <td>${has?r.toFixed(4):'—'}</td><td>${has?(1/r).toFixed(4):'—'}</td></tr>`;
+      }).join('')}</tbody>
+    </table>
+  </div>`;
 }
 
 /* A full-width page inside the tab, not a sheet. Same chrome, one level down,
@@ -2876,7 +2908,8 @@ const YEARLESS = ['history','settings'];
 function renderYearBar(){
   const el = document.getElementById('yearBar'); if (!el) return;
   const Y = state.year, i = YEARS.indexOf(Y);
-  const off = YEARLESS.includes(state.tab);
+  /* Settings is yearless except for Currency, which is a year's worth of rates. */
+  const off = YEARLESS.includes(state.tab) && !(state.tab==='settings' && state.settings==='fx');
   el.className = 'hdryear' + (off ? ' off' : '');
   el.innerHTML = `
     <div class="ystep">

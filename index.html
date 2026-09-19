@@ -181,6 +181,21 @@
   .cap.ess{color:var(--accent);border-color:var(--accent);background:rgba(59,130,246,.12)}
   .cap.opt{color:var(--warn);border-color:var(--warn);background:rgba(251,191,36,.12)}
   .cap.inc{color:var(--good);border-color:var(--good);background:rgba(74,222,128,.10)}
+  /* A budget's capsule on an entry, in the budget's colour. */
+  .bcap{font-size:9.5px;padding:1px 6px;margin-left:5px;vertical-align:1px;border-color:currentColor}
+  /* Select box on an operation row, and the bar that appears once some are. */
+  .ck{width:18px;height:18px;border:1.5px solid var(--muted);border-radius:5px;flex:none;
+    display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#fff;cursor:pointer}
+  .ck.on{background:var(--accent);border-color:var(--accent)}
+  .selbar{position:fixed;left:0;right:0;bottom:calc(64px + env(safe-area-inset-bottom));z-index:15;
+    margin:0 auto;max-width:528px;display:flex;align-items:center;gap:7px;padding:9px 12px;
+    background:rgba(24,27,36,.97);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 6px 22px rgba(0,0,0,.45);font-size:12.5px}
+  .selbar span{flex:1;font-weight:600}
+  .selbar select{flex:1;min-width:0;padding:6px 8px;font-size:12.5px}
+  .swatches{display:flex;gap:8px;flex-wrap:wrap}
+  .swatch{width:26px;height:26px;border-radius:8px;border:2px solid transparent;cursor:pointer}
+  .swatch.on{border-color:#fff}
   .tile.cat .s.down{color:var(--good);font-weight:700}
   /* Two overlaid sliders make a range control. A native range input is the
      one thing on a phone that is already the right size for a thumb. */
@@ -463,7 +478,7 @@ addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT =
   if (typeof render==='function') render(); });
 addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
 
-const APP_VERSION="21";
+const APP_VERSION="22";
 /* The shipped app has no data in it. `data.js` is only present in the private
    working copy; if it happens to be there it seeds a first run, otherwise the
    store starts empty and fills from an import or from what you type. */
@@ -1509,16 +1524,44 @@ function spendDetail(id){
       const v = C.conv(r.amount,r.currency,r.month,state.cur);
       /* Credits green, debits red. A refund inside a spending category is the
          thing most easily misread as another cost. */
-      return `<div class="row flat" data-editentry="${esc(r.src)}"><div>
-        <div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,26))}</div>
-        <div class="sub">${r.date.slice(5)} · ${esc(r.group)} · ${esc(r.account)}${
+      return `<div class="row flat" data-editentry="${esc(r.src)}">${selBox(r)}<div style="flex:1;min-width:0">
+        <div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,26))}${budgetCap(r)}</div>
+        <div class="sub">${r.date.slice(5)} · ${esc(tagName(r.group))} · ${esc(r.account)}${
           r.oneoff?' · <b>one off</b>':''}</div></div>
         <div class="amt"><b style="color:${v>0?'var(--good)':'var(--bad)'}">${m2(v)}</b>
         ${r.currency!==state.cur?`<span class="alt">${m2(r.amount,symOf(r.currency))}</span>`:''}</div>
       </div>`;}).join('')}</div>
     ${list.length>200?`<div class="hint">Newest 200 of ${list.length}.</div>`:''}
     ${!list.length?`<div class="hint">Nothing here.</div>`:''}
-  </div>`;
+  </div>
+  ${selBar()}`;
+}
+
+/* ------------------------------------------------ selecting several entries --
+
+   A box on the left of every operation row. Once any are ticked, a bar sits
+   above the nav with what can be done to all of them at once: give them a
+   tag, or put them on a budget. Leaving the screen drops the selection.    */
+const selBox = (r) => `<span class="ck ${(state.selOps||[]).includes(r.src)?'on':''}" data-selop="${esc(r.src)}">${
+  (state.selOps||[]).includes(r.src)?'✓':''}</span>`;
+function selBar(){
+  const n = (state.selOps||[]).length;
+  if (!n) return '';
+  const tax = taxonomy();
+  const tags = Object.keys(tax.OF).sort();
+  const live = budgets().filter((b)=>budgetLive(b, state.year));
+  const body = state.bulk==='tag'
+    ? `<select id="bulkTag"><option value="">—</option>${tags.map((t)=>
+        `<option value="${esc(t)}">${esc(tagName(t))} · ${esc((tax.byId[tax.OF[t]]||{}).label||tax.OF[t])}</option>`).join('')}</select>
+       <button class="gbtn" data-bulkapply="tag">Apply</button>`
+    : state.bulk==='budget'
+    ? `<select id="bulkBudget"><option value="">none</option>${live.map((b)=>
+        `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')}</select>
+       <button class="gbtn" data-bulkapply="budget">Apply</button>`
+    : `<span>${n} selected</span>
+       <button class="gbtn" data-bulk="tag">Tag</button>
+       <button class="gbtn" data-bulk="budget" ${live.length?'':'disabled'}>Budget</button>`;
+  return `<div class="selbar">${body}<button class="gbtn ghost" data-selclear="1">✕</button></div>`;
 }
 
 /* ------------------------------------------------------------- Budgets ----
@@ -1533,6 +1576,14 @@ function spendDetail(id){
 
 const budgets = () => store.budgets || (store.budgets = []);
 const budgetOf = (id) => budgets().find((b)=>b.id===id);
+/* Each budget has a colour, so its capsule on an entry says which budget
+   without reading. New ones take the first colour no live budget is using. */
+const BUDGET_COLORS = ['--c3','--c5','--c4','--c7','--c2','--c6','--c8','--c1'];
+const budgetColor = (b) => b.color || BUDGET_COLORS[Math.max(0, budgets().indexOf(b)) % BUDGET_COLORS.length];
+const freeBudgetColor = () => BUDGET_COLORS.find((c)=>!budgets().some((b)=>budgetLive(b, state.year) && budgetColor(b)===c))
+  || BUDGET_COLORS[budgets().length % BUDGET_COLORS.length];
+const budgetCap = (r) => { const b = r.budget && budgetOf(r.budget);
+  return b ? `<span class="cap bcap" style="color:var(${budgetColor(b)})">${esc(b.name)}</span>` : ''; };
 const budgetRows = (id) => C.rows({ ...opts(), livingOnly:false })
   .filter((r)=>r.budget===id);
 const budgetSpent = (id) => budgetRows(id)
@@ -1555,9 +1606,10 @@ function budgetCard(){
         const over = spent > b.amount;
         return `<div class="row" data-openbudget="${esc(b.id)}">
           <div style="flex:1;min-width:0">
-            <div class="code">${esc(b.name)}${b.closed?`<span class="tag">closed</span>`:''}</div>
+            <div class="code"><span class="cap bcap" style="margin:0 6px 0 0;color:var(${budgetColor(b)})">${
+              esc(b.name)}</span>${b.closed?`<span class="tag">closed</span>`:''}</div>
             <div class="bbar"><i style="width:${Math.min(100,pc).toFixed(1)}%;
-              background:${over?'var(--bad)':'var(--c3)'}"></i></div>
+              background:${over?'var(--bad)':'var('+budgetColor(b)+')'}"></i></div>
           </div>
           <div class="amt"><b style="color:${over?'var(--bad)':'var(--txt)'}">${m0(spent)}</b>
             <span class="alt">of ${m0(b.amount)}</span></div>
@@ -1574,6 +1626,9 @@ function budgetForm(){
       <input id="bName" value="${esc(b.name||'')}" placeholder="e.g. Kitchen, Italy 2026"></div>
     <div class="field"><label>Amount in ${esc(state.cur)}</label>
       <input id="bAmount" value="${esc(String(b.amount||''))}" inputmode="decimal" placeholder="0"></div>
+    <div class="field"><label>Colour</label>
+      <div class="swatches">${BUDGET_COLORS.map((c)=>
+        `<span class="swatch ${(b.color||freeBudgetColor())===c?'on':''}" style="background:var(${c})" data-bcolor="${c}"></span>`).join('')}</div></div>
     <div class="btnrow">
       <button class="btn primary" data-bsave="1">${b.id?'Save':'Create'}</button>
       <button class="btn" data-bcancel="1">Cancel</button>
@@ -1614,7 +1669,7 @@ function budgetDetail(id){
       left>=0?'var(--good)':'var(--bad)'}">${left>=0?m0(left)+' left':m0(-left)+' over'}</b></div>
     <div class="bbar" style="margin-top:12px;height:10px"><i style="width:${
       Math.min(100, b.amount?spent/b.amount*100:0).toFixed(1)}%;
-      background:${left<0?'var(--bad)':'var(--c3)'}"></i></div>
+      background:${left<0?'var(--bad)':'var('+budgetColor(b)+')'}"></i></div>
     <div class="heroSub" style="margin-top:8px">${rows.length} entr${rows.length===1?'y':'ies'}
       across ${groups.length} categor${groups.length===1?'y':'ies'}${
       b.closed?` · closed ${esc(b.closed)}`:''}</div>
@@ -2233,8 +2288,9 @@ function accountDetail(code){
       ${!allOps.length ? `<div class="hint" style="margin-top:0">Nothing in ${state.year} yet.</div>` : ''}
 
       <div class="rows">${ops.slice(0,120).map((r)=>{
-        return `<div class="row flat" data-editentry="${esc(r.src)}">
-          <div><div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,28))}</div>
+        return `<div class="row flat" data-editentry="${esc(r.src)}">${selBox(r)}
+          <div style="flex:1;min-width:0"><div class="code" style="font-size:12.5px;font-weight:600">${
+              esc((r.party||'—').slice(0,28))}${budgetCap(r)}</div>
             <div class="sub">${r.date} · ${[r.group].concat((r.parts||[]).map((p)=>p.group))
               .map((g)=>esc(tagName(g))).join(' + ')}${r.note?' · '+esc(r.note.slice(0,16)):''}</div></div>
           <div class="amt"><b style="color:${r.amount<0?'var(--bad)':'var(--good)'}">${m2(r.amount,s)}</b>
@@ -2242,7 +2298,8 @@ function accountDetail(code){
         </div>`;}).join('')}</div>
       ${ops.length>120?`<div class="hint">Newest 120 of ${ops.length}.</div>`:''}
       ${!ops.length?`<div class="hint">Nothing matches that filter.</div>`:''}
-    </div>`}`;
+    </div>
+    ${selBar()}`}`;
 }
 
 /* ----------------------------------------------------------------- History --*/
@@ -2978,9 +3035,10 @@ function renderYearBar(){
         title="One-off entries — a house sale, a car sale">1</button>
     </div>`;
   const ys=el.querySelector('#yearSel');
+  /* The account or category you are looking at stays open and shows the new
+     year; only the month selection and the checks list are dropped. */
   if (ys) ys.onchange=()=>{
-    state.year=+ys.value; state.account=null; state.spendCat=null;
-    state.checks=false; render(); };
+    state.year=+ys.value; state.spendMonths=[]; state.checks=false; render(); };
   const ot=el.querySelector('#oneOffTog');
   if (ot) ot.onclick=()=>{ store.showOneOff=!store.showOneOff; save(); render(); };
 }
@@ -2996,6 +3054,7 @@ function render(){
   const key = screenKey();
   const moved = key !== lastScreen;
   lastScreen = key;
+  if (moved) { state.selOps=[]; state.bulk=null; }   // a selection belongs to one screen
   renderNav();
   renderStamp();
   renderYearBar();
@@ -3460,7 +3519,11 @@ function wire(){
 
   /* ---- budgets ---- */
   document.querySelectorAll('[data-newbudget]').forEach((el)=>el.onclick=()=>{
-    state.budgetEdit={ id:null, name:'', amount:'' }; render(); });
+    state.budgetEdit={ id:null, name:'', amount:'', color:freeBudgetColor() }; render(); });
+  document.querySelectorAll('[data-bcolor]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('bName'), a=document.getElementById('bAmount');
+    if (n) state.budgetEdit.name=n.value; if (a) state.budgetEdit.amount=a.value;
+    state.budgetEdit.color=el.dataset.bcolor; render(); });
   document.querySelectorAll('[data-openbudget]').forEach((el)=>el.onclick=()=>{
     state.budget=el.dataset.openbudget; render(); });
   document.querySelectorAll('[data-bback]').forEach((el)=>el.onclick=()=>{
@@ -3476,8 +3539,9 @@ function wire(){
     if (!name) { alert('A name, please.'); return; }
     if (!isFinite(amount)) { alert('An amount, please.'); return; }
     const cur=state.budgetEdit;
-    if (cur.id) { const b=budgetOf(cur.id); b.name=name; b.amount=amount; }
-    else budgets().push({ id:DS.uid('b'), name, amount, created:new Date().toISOString() });
+    const color=cur.color||freeBudgetColor();
+    if (cur.id) { const b=budgetOf(cur.id); b.name=name; b.amount=amount; b.color=color; }
+    else budgets().push({ id:DS.uid('b'), name, amount, color, created:new Date().toISOString() });
     state.budgetEdit=null; save(); render(); });
   document.querySelectorAll('[data-bclose]').forEach((el)=>el.onclick=()=>{
     const b=budgetOf(el.dataset.bclose); if(!b) return;
@@ -3504,6 +3568,31 @@ function wire(){
     sign:-1, group:'', note:'', oneoff:false, budget:'', parts:[], src:null });
   document.querySelectorAll('[data-addentry]').forEach((el)=>el.onclick=()=>{
     state.entry=newEntry(el.dataset.addentry||state.account); state.tab='accounts'; render(); });
+  /* ---- several at once ---- */
+  document.querySelectorAll('[data-selop]').forEach((el)=>el.onclick=(e)=>{
+    if (e && e.stopPropagation) e.stopPropagation();       // the row underneath would open the editor
+    const s=state.selOps||[], src=el.dataset.selop;
+    state.selOps = s.includes(src) ? s.filter((x)=>x!==src) : [...s, src];
+    if (!state.selOps.length) state.bulk=null;
+    render(); });
+  document.querySelectorAll('[data-selclear]').forEach((el)=>el.onclick=()=>{
+    state.selOps=[]; state.bulk=null; render(); });
+  document.querySelectorAll('[data-bulk]').forEach((el)=>el.onclick=()=>{
+    state.bulk=el.dataset.bulk; render(); });
+  document.querySelectorAll('[data-bulkapply]').forEach((el)=>el.onclick=()=>{
+    const srcs=state.selOps||[];
+    if (el.dataset.bulkapply==='tag') {
+      const sel=document.getElementById('bulkTag'); const tag=sel?sel.value:'';
+      if (!tag) { alert('Pick a tag.'); return; }
+      const tax=taxonomy();
+      const kind=(tax.byId[tax.OF[tag]]||{}).kind || 'spend';
+      for (const src of srcs) DS.updateEntry(D, src, { group:tag, type:kind });
+    } else {
+      const sel=document.getElementById('bulkBudget'); const id=sel?sel.value:'';
+      for (const src of srcs) DS.updateEntry(D, src, { budget:id||undefined });
+    }
+    state.selOps=[]; state.bulk=null; commit(); });
+
   document.querySelectorAll('[data-editentry]').forEach((el)=>el.onclick=()=>{
     const r=D.ledger.find((x)=>x.src===el.dataset.editentry); if(!r) return;
     state.entry={ account:r.account, date:r.date, party:r.party,

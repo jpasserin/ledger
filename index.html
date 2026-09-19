@@ -1,0 +1,3541 @@
+<!DOCTYPE html>
+<!--
+  Ledger — phone-first draft.
+
+  Tokens and layout are Graphite's and Anvil's, verbatim, so the three apps stay
+  interchangeable: same dark palette, same 560px wrap, same fixed bottom nav,
+  same card shape.
+
+  SAFETY: no network code, no credentials, no write path. Reads data.js, which
+  build.js generated from read-only dumps. Nothing here can reach a spreadsheet.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0f15">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ledger">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Ledger</title>
+<style>
+  :root{
+    color-scheme:dark;   /* page handles its own dark theme */
+    /* Graphite's tokens, verbatim */
+    --bg:#0d0f15; --bg2:#11131a; --card:#181b24; --card2:#1f2330; --line:#272b38;
+    --txt:#eef1f7; --muted:#8a92a6; --accent:#3b82f6; --accent2:#7cb8ff;
+    --good:#4ade80; --bad:#f87171; --warn:#fbbf24; --r:18px;
+    /* Category palette, validated against this card surface (#181b24) with the
+       dataviz validator: lightness band PASS, chroma PASS, contrast PASS,
+       worst adjacent CVD dE 7.7 — the floor band, legal only with secondary
+       encoding, so every series is ALWAYS named in a legend or a direct label.
+       Eight slots. A ninth category folds into Other; do not add a hue. */
+    --c1:#3b82f6; --c2:#c03300; --c3:#33a569; --c4:#b68320;
+    --c5:#c155ba; --c6:#7cb8ff; --c7:#5b6ee8; --c8:#d4564f;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    overscroll-behavior-y:none;}
+  body{padding-top:env(safe-area-inset-top);padding-bottom:calc(72px + env(safe-area-inset-bottom));}
+  .wrap{max-width:560px;margin:0 auto;padding:16px 16px 24px;}
+
+  header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;
+    margin:0 -16px 14px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);}
+  header h1{font-size:20px;margin:0;letter-spacing:.3px;line-height:1.1;}
+  header h1 .dot{color:var(--accent)}
+  /* How old is "today"? A finance app that shows a stale figure without saying
+     so is worse than one that shows nothing. */
+  .hdrsub{font-size:10px;color:var(--muted);margin-top:2px;letter-spacing:.2px;}
+  .hdrsub b{color:var(--txt);font-weight:600}
+  .hdrsub.stale b{color:var(--warn)}
+  header .hdrright{display:flex;align-items:center;gap:8px;}
+  .hdrbtn{background:none;border:none;color:var(--muted);cursor:pointer;padding:2px;
+    display:inline-flex;align-items:center;position:relative;}
+  .hdrbtn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;}
+  .hdrbtn.active{color:var(--accent);}
+  .hdrbtn .dotbadge{position:absolute;top:-2px;right:-4px;min-width:15px;height:15px;
+    background:var(--bad);color:#fff;border-radius:8px;font-size:9.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;padding:0 3px;}
+  .curtog{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
+  .curtog button{background:none;border:0;color:var(--muted);font-size:11.5px;font-weight:600;
+    padding:4px 8px;cursor:pointer;}
+  .curtog button.on{background:var(--accent);color:#fff;}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+    padding:16px;margin-bottom:14px;}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
+    margin:0 0 13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  /* A heading that starts with a control reads as one phrase - "Food month by
+     month" - so it must not be pushed apart the way a heading with an action
+     on the right is. */
+  /* The button in a group's top-right corner. One style everywhere. */
+  .gbtn{background:var(--accent);border:1px solid var(--accent);color:#fff;
+    border-radius:8px;min-width:26px;height:24px;padding:0 7px;font-size:14px;
+    font-weight:700;line-height:1;cursor:pointer;font-family:inherit;
+    display:inline-flex;align-items:center;justify-content:center;
+    text-transform:none;letter-spacing:0;}
+  .gbtn:active{opacity:.8}
+  .gbtn.ghost{background:none;color:var(--accent2);border-color:var(--line);font-weight:600;
+    font-size:11.5px;letter-spacing:.2px}
+  .tile.cls-essential{border-top-color:var(--accent);background:rgba(59,130,246,.10)}
+  .tile.cls-optional{border-top-color:var(--warn);background:rgba(251,191,36,.10)}
+  .tile.cls-income,.tile.cls-tax,.tile.cls-savings{border-top-color:var(--good);
+    background:rgba(74,222,128,.09)}
+  .tile.cls-other{border-top-color:var(--line)}
+  .card h2 .act{text-transform:none;letter-spacing:0;font-weight:600;color:var(--accent2);
+    cursor:pointer;font-size:12px;}
+  .hint{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px;}
+  .muted{color:var(--muted)}
+
+  .hero{font-size:34px;font-weight:800;letter-spacing:-.5px;line-height:1.05;}
+  .heroSub{color:var(--muted);font-size:12.5px;margin-top:5px;}
+  .herodelta{font-size:13px;font-weight:700;letter-spacing:0;margin-left:9px;
+    white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .herodelta i{font-style:normal;opacity:.7;font-size:11.5px;margin-left:3px}
+  .kpis{display:flex;gap:8px;}
+  .kpi{flex:1;min-width:0;background:var(--card2);border-radius:14px;padding:11px 10px;}
+  /* The ? is a button in the box's corner, matching every other group action,
+     rather than the whole box being mysteriously tappable. */
+  .kpi{position:relative}
+  .kpi .kq{position:absolute;top:6px;right:6px;width:18px;height:18px;padding:0;
+    font-size:10px;border-radius:6px;background:none;border:1px solid var(--line);
+    color:var(--accent2);font-weight:700;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;line-height:1}
+  .kpi .kq:active{background:var(--bg2)}
+  .kpi .l{padding-right:22px}
+  .kpi .l{font-size:10px;color:var(--muted);line-height:1.25;text-transform:uppercase;letter-spacing:.4px;}
+  .kpi .v{font-size:17px;font-weight:700;margin-top:4px;letter-spacing:-.2px;}
+  .kpi .n{font-size:10px;color:var(--muted);margin-top:2px;}
+
+  /* part-to-whole: one stacked bar. A 2-slice pie is an anti-pattern and a
+     donut misreads when two shares are close, which cash and savings are. */
+  .splitkeys{display:flex;flex-wrap:wrap;gap:10px;margin-top:9px;}
+  .splitkey{display:flex;align-items:center;gap:6px;font-size:12px;}
+  .splitkey .sw{width:10px;height:10px;border-radius:3px;flex:none;}
+  .splitkey b{font-variant-numeric:tabular-nums;}
+  .splitkey .pc{color:var(--muted);font-size:11px;}
+
+  /* Compact part-to-whole: one bar, the amount written inside the segment.
+     A segment too narrow to hold its number keeps it in the keys row below,
+     which is the only case that still needs one. */
+  .cbar{display:flex;height:30px;border-radius:9px;overflow:hidden;background:var(--bg2);gap:2px;}
+  .cbar i{display:flex;align-items:center;justify-content:center;height:100%;min-width:0;
+    font-size:12px;font-weight:700;font-style:normal;font-variant-numeric:tabular-nums;
+    letter-spacing:-.2px;white-space:nowrap;overflow:hidden;}
+  .cbar i .pc{font-weight:600;opacity:.72;margin-left:5px;font-size:10.5px;}
+
+  /* Account tiles: four to a row at 352px, so ~82px each. Category decides the
+     tint; the girls override it; closed goes grey and to the bottom. */
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
+  .tile{background:var(--card2);border:1px solid var(--line);border-radius:12px;
+    padding:8px 6px 7px;cursor:pointer;min-width:0;border-top:3px solid var(--line);}
+  .tile:active{transform:scale(.97)}
+  .tile .k{font-size:11px;font-weight:700;letter-spacing:-.1px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  /* Balances are shown whole, never abbreviated, so the type has to give. At
+     9.5px "$254,714" is 47px inside an 82px tile; the widest real figure is
+     "€1,030,546" and it still fits. */
+  .tile .v{font-size:11px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums;
+    letter-spacing:-.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tile .v.long{font-size:9.5px;letter-spacing:-.4px}
+  .tile .s{font-size:9px;color:var(--muted);margin-top:2px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;}
+  .tile.cash   {border-top-color:var(--c1);background:rgba(59,130,246,.10)}
+  .tile.savings{border-top-color:var(--c3);background:rgba(51,165,105,.10)}
+  .tile.estate {border-top-color:var(--c4);background:rgba(182,131,32,.12)}
+  .tile.excluded{border-top-color:var(--c6);background:rgba(124,184,255,.08)}
+  .tile.girl   {border-top-color:var(--c5);background:rgba(193,85,186,.13)}
+  .tile.shut   {border-top-color:#3a3f4d;background:rgba(138,146,166,.07);opacity:.62}
+  /* Spending tiles: name, monthly average, and the change against last year.
+     Red means it grew - on a cost, up is the bad direction. */
+  /* Sections, coloured by what the spending IS. The label carries the meaning;
+     the colour only reinforces it. */
+  .secttl{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:10px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;
+    margin:14px 0 7px;padding-bottom:4px;border-bottom:2px solid var(--line);}
+  .secttl:first-child{margin-top:0}
+  .secttl span{font-size:11.5px;font-weight:600;text-transform:none;letter-spacing:0;
+    font-variant-numeric:tabular-nums;color:var(--txt)}
+  .secttl.ess{color:var(--accent);border-bottom-color:rgba(59,130,246,.45)}
+  .secttl.opt{color:var(--warn);border-bottom-color:rgba(251,191,36,.45)}
+  .secttl.oth{color:var(--muted)}
+  .secttl.inc{color:var(--good);border-bottom-color:rgba(74,222,128,.45)}
+  .tile.cat{border-top-color:var(--line);background:rgba(255,255,255,.03)}
+  .tile.cat.ess{border-top-color:var(--accent);background:rgba(59,130,246,.09)}
+  .tile.cat.opt{border-top-color:var(--warn);background:rgba(251,191,36,.09)}
+  .tile.cat.inc{border-top-color:var(--good);background:rgba(74,222,128,.08)}
+  .tile.cat .s.up{color:var(--bad);font-weight:700}
+  .tile.cat .s.down{color:var(--good);font-weight:700}
+  /* Two overlaid sliders make a range control. A native range input is the
+     one thing on a phone that is already the right size for a thumb. */
+  .rng{position:relative;height:30px;margin:10px 0 0}
+  .rng input{position:absolute;left:0;right:0;top:0;width:100%;margin:0;
+    -webkit-appearance:none;appearance:none;background:none;pointer-events:none;height:18px}
+  .rng input::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:2px}
+  .rng input::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;
+    width:18px;height:18px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);
+    margin-top:-8px;cursor:pointer}
+  .rng input::-moz-range-thumb{pointer-events:auto;width:16px;height:16px;border-radius:50%;
+    background:var(--accent);border:2px solid var(--bg);cursor:pointer}
+  .rngv{position:absolute;left:0;right:0;top:19px;display:flex;justify-content:space-between;
+    font-size:9.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .sepline{height:1px;background:var(--line);margin:14px -16px}
+  /* Framed sections inside one card. The outline colour is the only thing
+     carrying "this is the good kind of spending to grow", so each frame also
+     names itself - never colour alone. */
+  .frame{border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px}
+  .frame.inc{border-color:rgba(74,222,128,.45)}
+  .frame.ess{border-color:rgba(59,130,246,.45)}
+  .frame.opt{border-color:rgba(251,191,36,.45)}
+  .frametop{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+    font-weight:600;margin-bottom:8px}
+  .frametop span{font-size:12.5px;font-variant-numeric:tabular-nums;
+    text-transform:none;letter-spacing:0}
+  /* How much of a budget is gone. Red the moment it is over, because that is
+     the only state you need to notice without reading a number. */
+  .bbar{height:6px;border-radius:4px;background:var(--bg2);overflow:hidden;margin-top:6px}
+  .bbar i{display:block;height:100%;border-radius:4px;min-width:2px}
+  .tile .alt2{color:var(--muted);font-variant-numeric:tabular-nums}
+  /* Currency divider inside the grid. Euro accounts above, dollars below,
+     because scanning a column of mixed symbols means reading every one. */
+  .tiles .sep{grid-column:1/-1;display:flex;justify-content:space-between;align-items:baseline;
+    font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600;
+    border-bottom:1px solid var(--line);padding-bottom:4px;margin:6px 0 1px;}
+  .tiles .sep:first-child{margin-top:0}
+  .tiles .sep span{font-size:11px;color:var(--txt);font-variant-numeric:tabular-nums;
+    text-transform:none;letter-spacing:0}
+
+  .field{margin-bottom:11px}
+  .field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--muted);margin-bottom:5px;font-weight:600;}
+  .field input,.field select{width:100%}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:var(--card2);border:1px solid var(--line);border-radius:18px;padding:5px 11px;
+    font-size:12px;color:var(--muted);cursor:pointer}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .chip.pink.on{background:var(--c5);border-color:var(--c5)}
+  .btn{display:block;width:100%;text-align:center;background:var(--card2);border:1px solid var(--line);
+    color:var(--txt);border-radius:12px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;
+    font-family:inherit;}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.danger{color:var(--bad);border-color:rgba(248,113,113,.35)}
+  .btn+.btn{margin-top:7px}
+  .btn[disabled]{opacity:.5;cursor:default}
+  .btnrow{display:flex;gap:7px}.btnrow .btn{margin-top:0}
+  /* Two date inputs side by side. A flex row clipped the third field, because
+     a date input has an intrinsic width it will not go below. */
+  .searchcard{padding:12px}
+  .searchrow{display:flex;gap:8px;align-items:stretch}
+  .searchrow input{flex:1;min-width:0;padding:9px 11px}
+  /* The active filters, as removable chips, reading like a sentence. */
+  .fbox{flex:1;min-width:0;display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+    background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:6px 8px;
+    min-height:36px;}
+  .fph{font-size:12.5px;color:var(--muted)}
+  .fchip{display:inline-flex;align-items:center;gap:5px;background:var(--accent);color:#fff;
+    border-radius:14px;padding:2px 4px 2px 9px;font-size:11px;font-weight:600;white-space:nowrap}
+  .fchip b{cursor:pointer;opacity:.75;font-weight:700;padding:0 4px}
+  /* Bench's pattern: the menu hangs off the button, right-aligned so it never
+     runs off the screen, and about a third of the phone wide. Absolute, so
+     opening it does not push the list you are reading down the page. */
+  .fdrop{position:relative;flex:none}
+  .fmenu{position:absolute;right:0;top:100%;z-index:30;margin-top:6px;
+    min-width:138px;max-width:min(230px,66vw);max-height:330px;overflow:auto;
+    display:none;flex-direction:column;background:var(--card2);
+    border:1px solid var(--line);border-radius:10px;padding:4px;
+    box-shadow:0 10px 28px -8px rgba(0,0,0,.7)}
+  .fmenu.show{display:flex}
+  .fitem{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;
+    text-align:left;background:none;border:0;color:var(--txt);font-size:13px;
+    padding:7px 9px;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .fitem:hover,.fitem:active{background:var(--bg2)}
+  .fitem span{color:var(--accent2);font-size:11px;font-weight:600;
+    overflow:hidden;text-overflow:ellipsis}
+  .fitem.on{color:var(--accent2);font-weight:600}
+  .fitem.danger{color:var(--bad)}
+  .fback{font-size:11px;color:var(--muted);padding:5px 9px 7px;cursor:pointer;
+    border-bottom:1px solid var(--line);margin-bottom:4px;font-weight:600}
+  .fsep{height:1px;background:var(--line);margin:4px 0}
+  .fmenu .fsearch{width:100%;font-size:12.5px;padding:6px 8px;margin-bottom:4px;flex:none}
+  .fmenu .frow{display:flex;gap:5px;margin-bottom:4px}
+  .fmenu .frow input{width:0;flex:1;min-width:0;font-size:12.5px;padding:6px 8px}
+  .fmenu .fopts{overflow:auto;max-height:230px}
+  .fmenu .fempty{padding:7px 9px;color:var(--muted);font-size:12px}
+  .iconbtn{flex:none;width:42px;background:var(--card2);border:1px solid var(--line);
+    border-radius:9px;color:var(--muted);cursor:pointer;display:flex;align-items:center;
+    justify-content:center;position:relative;}
+  .iconbtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;
+    stroke-linecap:round}
+  .iconbtn.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .iconbtn .dotbadge{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;
+    background:var(--bad);color:#fff;border-radius:8px;font-size:9.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;padding:0 3px;}
+
+  .rows{display:flex;flex-direction:column;gap:2px;}
+  .row{display:flex;align-items:center;gap:10px;padding:10px 11px;background:var(--card2);
+    border-radius:12px;cursor:pointer;}
+  .row:active{transform:scale(.99)}
+  .row .code{font-weight:700;font-size:13.5px;}
+  .row .sub{font-size:11px;color:var(--muted);margin-top:1px;}
+  .row .amt{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums;}
+  .row .amt b{font-size:14px;}
+  .row .amt .alt{display:block;font-size:10.5px;color:var(--muted);}
+  .row.flat{background:none;padding:8px 2px;border-bottom:1px solid var(--line);border-radius:0;}
+  .row.flat:last-child{border-bottom:0}
+  .tag{font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);
+    border:1px solid var(--line);border-radius:6px;padding:1px 5px;}
+
+
+  svg.chart{display:block;width:100%;height:auto;overflow:visible}
+  .gl{stroke:var(--line);stroke-width:1}
+  .tick{fill:var(--muted);font-size:9.5px}
+  .vlab{fill:var(--txt);font-size:9.5px;font-weight:700}
+  .vlab.sm{font-size:8px;font-weight:600;letter-spacing:-.2px}
+  .legend{display:flex;flex-wrap:wrap;gap:9px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend .sw{width:10px;height:10px;border-radius:3px}
+
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  th,td{padding:6px 4px;text-align:right;white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;
+    border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  td{border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  tr:last-child td{border-bottom:0}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px}
+
+  select,input{font:inherit;background:var(--card2);color:var(--txt);border:1px solid var(--line);
+    border-radius:9px;padding:6px 9px;font-size:13px;}
+  input:disabled{color:var(--muted);background:var(--bg2);border-style:dashed;}
+  .pillrow{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  .pill{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 11px;
+    font-size:12px;color:var(--muted);cursor:pointer}
+  /* A segmented control, not pills: these are alternatives to one another and
+     exactly one is always chosen, which a row of separate pills does not say. */
+  .segs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;
+    text-transform:none;letter-spacing:0;}
+  .seg{background:none;border:0;border-right:1px solid var(--line);color:var(--muted);
+    font-size:10.5px;font-weight:600;padding:3px 8px;cursor:pointer;font-family:inherit;}
+  .seg:last-child{border-right:0}
+  .seg.on{background:var(--accent);color:#fff}
+
+  .pill.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+
+  /* The year, once, at the top. Sticky under the header so it stays reachable
+     down a long tab, and dimmed on History which ignores it - a control that
+     silently does nothing is worse than one that says it does nothing. */
+  /* The year, in the header between the name and the currency. Compact: at
+     384px the header also carries two icon buttons and the $/€ switch. */
+  header{gap:8px}
+  .hdrleft{flex:none;min-width:0}
+  .hdryear{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px}
+  .hdryear .ystep{margin:0;gap:2px;width:100%;justify-content:center}
+  .ysel{background:var(--card2);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;font-size:14px;font-weight:800;padding:2px 4px;
+    font-variant-numeric:tabular-nums;letter-spacing:-.2px;}
+  .hdryear.off{opacity:.4}
+  /* One-off entries — a house sale, a car sale — in or out of everything.
+     A button with a 1 in it, beside the year: both controls that change what
+     every number on the screen means, side by side. */
+  .onebtn{flex:none;width:26px;height:24px;border-radius:7px;font-size:12px;font-weight:800;
+    background:var(--card2);border:1px solid var(--line);color:var(--muted);
+    cursor:pointer;font-family:inherit;line-height:1;padding:0;
+    display:inline-flex;align-items:center;justify-content:center;}
+  .onebtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  /* The warning count, on the tab it concerns. */
+  .navico{position:relative;display:inline-flex}
+  .navwarn{position:absolute;top:-4px;right:-9px;min-width:14px;height:14px;
+    background:var(--bad);color:#fff;border-radius:7px;font-size:9px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;padding:0 3px;
+    border:1.5px solid var(--bg2);}
+
+  /* Year stepper. Thirteen years is too many for a pill row, and the year you
+     want is nearly always one step from the one you are on. */
+  .ystep{display:flex;align-items:center;gap:8px;margin-bottom:14px;}
+  .ybtn{background:var(--card2);border:1px solid var(--line);color:var(--txt);border-radius:11px;
+    width:42px;height:34px;font-size:14px;cursor:pointer;font-family:inherit;flex:none;
+    display:flex;align-items:center;justify-content:center;}
+  .ybtn:disabled{opacity:.32;cursor:default}
+  .ybtn.now{font-size:9px;color:var(--muted);width:34px}
+  .ybtn.now.on{color:var(--accent);border-color:var(--accent)}
+  /* << date >> navigation, shared by anything with a history to walk. */
+  .navrow{display:flex;align-items:center;gap:8px;margin-top:4px}
+  .navval{flex:1;text-align:center;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+  .yval{flex:1;text-align:center;font-size:19px;font-weight:800;letter-spacing:-.3px;
+    font-variant-numeric:tabular-nums;}
+
+
+  /* A select that reads as part of the heading rather than a form control.
+     Thirteen months of pills wrapped to three rows before you saw a number. */
+  .inlinesel{background:var(--card2);border:1px solid var(--line);border-radius:8px;
+    color:var(--txt);font-size:12px;font-weight:600;padding:3px 6px;text-transform:none;
+    letter-spacing:0;max-width:150px;}
+
+  nav{position:fixed;bottom:0;left:0;right:0;background:rgba(17,19,26,.92);
+    backdrop-filter:blur(12px);border-top:1px solid var(--line);
+    display:flex;justify-content:space-around;padding:8px 0 calc(8px + env(safe-area-inset-bottom));z-index:10;}
+  nav button{background:none;border:none;color:var(--muted);font-size:9px;display:flex;
+    flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 1px;flex:1;min-width:0;}
+  nav button svg{width:21px;height:21px;display:block;stroke:currentColor;fill:none;stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;}
+  nav button.active{color:var(--accent);}
+  .tab{display:none}
+  .tab.active{display:block}
+  /* The fade belongs to ARRIVING somewhere, not to every redraw. It used to be
+     on .tab, so pressing any button in the page replayed it - a flicker on
+     every tap, which reads as the app losing its place. */
+  .tab.enter{animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .sheet{position:fixed;inset:0;z-index:40;background:var(--bg);overflow-y:auto;
+    animation:up .22s ease;}
+  @keyframes up{from{transform:translateY(100%)}to{transform:none}}
+  .sheet header{position:sticky;top:0}
+  .find{background:var(--card2);border-radius:13px;padding:11px 12px;margin-bottom:8px;
+    border-left:3px solid var(--line);}
+  .find.high{border-left-color:var(--bad)} .find.medium{border-left-color:var(--warn)}
+  .find.low{border-left-color:var(--muted)} .find.info{border-left-color:var(--accent)}
+  .find .ft{font-weight:600;font-size:13px}
+  .find .fd{color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.45}
+  .find .fm{color:var(--muted);font-size:10px;margin-top:5px;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="hdrleft">
+      <h1>Ledger<span class="dot">.</span></h1>
+      <div class="hdrsub" id="hdrSub"></div>
+    </div>
+    <!-- The year sits between the name and the currency, so the two controls
+         that change what every number means are side by side. -->
+    <div class="hdryear" id="yearBar"></div>
+    <div class="hdrright">
+      <span class="curtog" id="curTog">
+        <button data-cur="USD" class="on">$</button><button data-cur="EUR">€</button>
+      </span>
+      <button class="hdrbtn" id="btnSettings" title="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="tabs"></div>
+</div>
+
+<nav id="nav"></nav>
+<div id="sheet"></div>
+
+<script src="schema.js"></script>
+<script src="dataset.js"></script>
+<script src="backend.js"></script>
+<script src="core.js"></script>
+<script>
+/* Chrome fires this when the app is installable, then expects US to call
+   prompt() later. Caught at the top of the script because it fires early and
+   once; without holding on to it there is no way to offer an Install button
+   at all, and Chrome's own banner is not guaranteed to appear. */
+let INSTALL_EVT = null;
+addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); INSTALL_EVT = e;
+  if (typeof render==='function') render(); });
+addEventListener('appinstalled', ()=>{ INSTALL_EVT = null; render(); });
+
+const APP_VERSION="16";
+/* The shipped app has no data in it. `data.js` is only present in the private
+   working copy; if it happens to be there it seeds a first run, otherwise the
+   store starts empty and fills from an import or from what you type. */
+const DS = window.LedgerData;
+const BK = window.LedgerBackend;
+let D = DS.load();
+if (DS.isEmpty(D) && window.LEDGER_DATA) { D = DS.normalise(window.LEDGER_DATA); DS.save(D); }
+/* The private working copy also carries tags.js; fold it in the first time so
+   the real-data suites have categories. The shipped app never loads it, so a
+   new install starts with none - which is the point. */
+if (window.LEDGER_TAGS && !(D.taxonomy && D.taxonomy.parents.length) && !DS.isEmpty(D)) {
+  const TG = window.LEDGER_TAGS;
+  D.taxonomy = { parents: TG.PARENTS.map((p)=>({ id:p.id, label:p.label, cls:p.cls||'other' })),
+    of: { ...TG.OF }, labels: {} };
+}
+const saveData = () => DS.save(D);
+/* The real dataset lives in IndexedDB and arrives asynchronously. Boot on
+   whatever is to hand, then swap it in. Core holds its own reference, so it
+   has to be re-initialised rather than just reassigned here. */
+async function adoptStored(){
+  const d = await DS.loadAsync();
+  if (DS.isEmpty(d) && !DS.isEmpty(D)) { DS.saveAsync(D); return; }
+  if (DS.isEmpty(d)) return;
+  D = d; LedgerCore.init(D); applyReg(); recomputeClock();
+  /* Land on the newest year that actually has data, not on whatever the empty
+     store guessed. */
+  if (!YEARS.includes(state.year)) state.year = YEARS[YEARS.length-1];
+  render();
+}
+const C = LedgerCore.init(D);
+const REG = window.LEDGER_SCHEMA;
+/* Which ink reads on each fill. Checked against the slot, not guessed: white
+   on the amber slot is 2.7:1 and unreadable, near-black on it is 7.6:1. */
+const INK = {'--c1':'#0d0f15','--c2':'#ffffff','--c3':'#0d0f15','--c4':'#0d0f15',
+             '--c5':'#0d0f15','--c6':'#0d0f15','--c7':'#ffffff','--c8':'#ffffff'};
+const LS = 'ledger-phone-v1';
+
+/* Three layers, merged here and nowhere else: what build.js generated, what
+   accounts.js declares, and what you have edited on this device. */
+/* Opened from a file:// URL - which is exactly how the packed single-file
+   copy arrives on a phone - localStorage is either unavailable or throws
+   SecurityError depending on the browser. Falling back to memory means your
+   edits last the session instead of killing the app on the first line. */
+let CAN_SAVE = true;
+function loadStore(){
+  try { return JSON.parse(localStorage.getItem(LS) || '{}'); }
+  catch (e) { CAN_SAVE = false; return {}; }
+}
+const store = Object.assign({ excludeOwners:[], dismissed:[], registry:{}, showOneOff:false, budgets:[],
+    tagOf:{}, tagExtra:[], tagLabel:{}, tagGone:[], tagHidden:[], tagCls:{}, splits:{} }, loadStore());
+const save = () => {
+  if (!CAN_SAVE) return;
+  try { localStorage.setItem(LS, JSON.stringify(store)); }
+  catch (e) { CAN_SAVE = false; }
+};
+
+/* accounts.js is the seed for a first run only. Once the dataset has
+   accounts of its own - imported or typed - those are the truth, with your
+   per-device edits on top. */
+function registry(){
+  const out = {};
+  /* No seeding from a shipped file. An app that arrives pre-populated with
+     someone else's accounts is not an empty app. */
+  for (const a of D.accounts) out[a.code] = { bank:a.bank, key:a.key, type:a.type,
+    subtype:a.subtype, category:a.category, currency:a.currency, owners:a.owners,
+    closed:a.closed, inWealth:a.inWealth, inSheet:a.inSheet };
+  for (const [c,r] of Object.entries(store.registry||{})) out[c] = {...(out[c]||{}), ...r};
+  return out;
+}
+const overridden = (code) => !!(store.registry||{})[code];
+
+/* The tag taxonomy, same three layers: tags.js declares it, Settings > Tags
+   overrides `tagOf` (a tag's parent) and `tagExtra` (parents you invent). */
+function taxonomy(){
+  /* Categories are data, in D.taxonomy, and start EMPTY on a new install.
+     Each carries a class from the schema, and the class decides its kind -
+     which is what the arithmetic sums it as. There is no override layer any
+     more: an edit is an edit to the data, saved and exported like an entry. */
+  const t = D.taxonomy || { parents:[], of:{}, labels:{} };
+  const CLASSES = REG.CLASSES;
+  const PARENTS = t.parents.map((p)=>({ id:p.id, label:p.label,
+    cls: CLASSES[p.cls] ? p.cls : 'other',
+    kind: (CLASSES[p.cls] || CLASSES.other).kind }));
+  const byId = Object.fromEntries(PARENTS.map((p)=>[p.id,p]));
+  return { PARENTS, OF: { ...t.of }, byId, CLASSES };
+}
+/* What a tag is CALLED here, which can differ from what the sheet calls it. */
+const tagName = (t) => ((D.taxonomy||{}).labels||{})[t] || t;
+const OWNERS = () => D.owners || {};
+const ownerKind = (o) => (D.ownerKind||{})[o] || 'parent';
+const isKid = (o) => ownerKind(o)==='kid';
+const applyReg = () => { C.applyRegistry(registry(), OWNERS()); C.useTags(taxonomy()); };
+
+/* Everything that changes the DATA rather than a per-device preference goes
+   through here: re-derive, then redraw. One path, so no screen can show a
+   figure the store does not hold.
+
+   The init() is not redundant. Core snapshots the account list the first time
+   applyRegistry runs and restores from that snapshot on every later call — so
+   after adding an entry, the `years` touch() had just worked out were
+   overwritten by a snapshot taken before the entry existed, and the account's
+   money silently stopped counting. init() drops the snapshot. */
+function afterDataChange(){ LedgerCore.init(D); applyReg(); recomputeClock(); }
+function commit(){ saveData(); afterDataChange(); render(); }
+applyReg();
+
+/* The newest month with real activity. The sheet pads the rest of the year with
+   the current figure so its formulas resolve, which must not be shown as fact. */
+/* With nothing loaded there is no "latest month", so fall back to the real
+   calendar. Every screen then shows an empty version of this year rather than
+   an empty version of the year 0. */
+const TODAY = new Date().toISOString().slice(0,10);
+/* These describe the DATA, so they cannot be frozen at boot - the app starts
+   on an empty store and the real dataset arrives from IndexedDB a moment
+   later. Computing them once left the year dropdown with a single year and
+   the header showing today instead of your last entry. Same shape of bug as
+   the registry snapshot: anything derived from D has to be recomputed when D
+   is replaced. */
+let NOW, YEAR, LAST_ENTRY, YEARS;
+function recomputeClock(){
+  NOW = C.lastMonth() === '0000-00' ? TODAY.slice(0,7) : C.lastMonth();
+  YEAR = +NOW.slice(0,4);
+  LAST_ENTRY = C.lastEntry() === '0000-00-00' ? TODAY : C.lastEntry();
+  YEARS = (D.realYears && D.realYears.length ? D.realYears.slice() : [YEAR])
+    .sort((a,b)=>a-b);
+}
+recomputeClock();
+
+
+const state = { cur:'USD', tab:'year', account:null, editing:false, spendMonth:null,
+  year:YEAR, cmpA:YEARS[0], cmpB:YEAR, bill:null,
+  openTag:null, settings:'data', tagPick:null, ownerEdit:null, entry:null, series:'total', wsel:'all',
+  opFilter:{ q:'', tag:'', subtag:'', from:'', to:'', min:'', max:'', oneoff:false,
+    dir:'', sort:'date', desc:true },
+  opSplit:null, fmenu:null,
+  prevDraft:null, prevIdx:null, renaming:null, histLo:null, histHi:null,
+  clsPick:null, budget:null, budgetEdit:null, checks:false, check:null, savCur:'' };
+/* One place decides whether one-offs are in. Every screen used to ask for
+   livingOnly itself, which meant the switch would have had to be threaded
+   through a dozen call sites and would have been missed in one of them. */
+const opts = () => ({ cur:state.cur, synthetic:false, excludeOwners:store.excludeOwners,
+  livingOnly: !store.showOneOff });
+
+/* ------------------------------------------------------------------ format --*/
+const sym = () => state.cur==='USD' ? '$' : '€';
+const symOf = (c) => c==='USD' ? '$' : c==='EUR' ? '€' : c+' ';
+function m0(v,s){ const r=Math.round(Math.abs(v));
+  /* A cleared credit card holds -0.0000000001 after the float residue, and
+     "-$0" reads like a fault rather than a zero balance. */
+  return (v<0&&r!==0?'-':'')+(s||sym())+r.toLocaleString('en-US'); }
+function m2(v,s){ const n=Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (v<0?'-':'')+(s||sym())+n; }
+const kk = (v) => { const a=Math.abs(v);
+  return (a>=1e6? (v/1e6).toFixed(a>=1e7?0:1)+'M' : a>=1000? (v/1000).toFixed(a>=1e4?0:1)+'k' : Math.round(v)+''); };
+/* Short, with the decimals that carry information. 1.88k rather than 1.9k,
+   because a rounded thousand hides fifty pounds and that is most of the
+   difference you were looking for - but 478k rather than 477.70k, because at
+   twelve columns across 352px a seven-character label collides with its
+   neighbours and then none of them can be read at all. Always five characters
+   or fewer. */
+const kk2 = (v) => { const a=Math.abs(v);
+  if (a>=1e6) return (v/1e6).toFixed(2)+'M';
+  if (a>=1e5) return Math.round(v/1000)+'k';
+  if (a>=1e4) return (v/1000).toFixed(1)+'k';
+  if (a>=1000) return (v/1000).toFixed(2)+'k';
+  return Math.round(v)+''; };
+/* Table cells. Seven columns of "$248,283" is 480px of text in a 352px
+   column, so anything over ten thousand is abbreviated - the magnitude is
+   what a month-by-month table is read for, and the exact figure is one tap
+   away on the month itself. */
+const tnum = (v) => Math.abs(v)>=10000 ? (v<0?'-':'')+sym()+kk(Math.abs(v)) : m0(v);
+const esc = (s) => String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const mLabel = (m) => MON[+m.slice(5,7)-1];
+
+/* The same thing, compact: one 30px bar with the amount written inside each
+   segment. A segment narrower than about 90px cannot hold a number, so that
+   one keeps its value in the keys row. Every segment is named there either
+   way - identity is never carried by colour alone. */
+function compactBar(parts, colors){
+  const tot = parts.reduce((s,p)=>s+Math.abs(p.value),0) || 1;
+  const pct = parts.map((p)=>Math.abs(p.value)/tot*100);
+  const inside = pct.map((p)=>p>=26);
+  return `<div class="cbar">${parts.map((p,i)=>
+    `<i style="width:${pct[i].toFixed(2)}%;background:var(${colors[i]});color:${INK[colors[i]]||'#0d0f15'}">${
+      inside[i] ? `${m0(p.value)}<span class="pc">${pct[i].toFixed(0)}%</span>` : ''}</i>`).join('')}</div>
+  <div class="splitkeys">${parts.map((p,i)=>
+    `<span class="splitkey"><span class="sw" style="background:var(${colors[i]})"></span>${esc(p.label)}${
+      inside[i] ? '' : ` <b>${m0(p.value)}</b> <span class="pc">${pct[i].toFixed(0)}%</span>`}</span>`).join('')}</div>`;
+}
+
+/* Horizontal bars, one per category. A vertical bar chart needs its labels
+   rotated or truncated once there are fifteen of them; a horizontal one gives
+   each label a whole line and stays readable at 352px. Length carries the
+   comparison, the number carries the value, and the monthly average sits
+   under it because that is the figure you actually budget against. */
+
+/* Columns. `diverging` splits above/below a zero line using the validated
+   blue/red pair; otherwise a single accent. Values are labelled on the bars
+   rather than relying on an axis, which is what makes it readable at 352px. */
+function columns({ labels, values, diverging, color, height, precise, keys, dataAttr, selected }) {
+  const W=352, H=height||132, T=14, B=16, L=0;
+  const ih=H-T-B, n=labels.length||1;
+  const max=Math.max(1,...values.map((v)=>Math.abs(v)));
+  const step=W/n, bw=Math.min(24, step*0.62);
+  const zero = diverging ? T+ih/2 : T+ih;
+  const scale = diverging ? (ih/2)/max : ih/max;
+  const fmt = precise ? kk2 : kk;
+  let g=`<line class="gl" x1="0" y1="${zero}" x2="${W}" y2="${zero}"/>`;
+  labels.forEach((lab,i)=>{
+    const v=values[i]||0, cx=L+step*i+step/2, h=Math.abs(v)*scale;
+    const up=v>=0, y=up? zero-h : zero;
+    /* The selected column is the only one in the accent colour, so which month
+       the list below belongs to is never in doubt. */
+    const isSel = selected!==undefined && keys && keys[i]===selected;
+    const col = isSel ? 'var(--accent)'
+      : diverging ? (up?'var(--accent)':'var(--bad)') : `var(${color||'--c1'})`;
+    /* A hit area the full height of the plot, not just the bar. A February
+       with almost nothing in it is a two-pixel target otherwise. */
+    const hit = keys && dataAttr
+      ? `<rect x="${(cx-step/2).toFixed(1)}" y="${T}" width="${step.toFixed(1)}" height="${ih.toFixed(1)}"
+          fill="transparent" style="cursor:pointer" ${dataAttr}="${esc(keys[i])}"/>` : '';
+    g+=hit;
+    if (h>0.4) g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}"
+      height="${Math.max(2,h).toFixed(1)}" rx="3" fill="${col}" pointer-events="none"${
+        isSel?' stroke="#fff" stroke-width="1.5"':''}/>`;
+    if (Math.abs(v) > max*0.06)
+      g+=`<text class="vlab${precise?' sm':''}" x="${cx.toFixed(1)}" y="${(up? y-3.5 : y+h+9).toFixed(1)}"
+        text-anchor="middle" pointer-events="none">${fmt(v)}</text>`;
+    g+=`<text class="tick" x="${cx.toFixed(1)}" y="${H-4}" text-anchor="middle"
+      pointer-events="none">${esc(lab)}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+
+/* Stacked columns for the category breakdown. 2px gaps between segments: the
+   worst adjacent pair sits in the CVD floor band, so shape carries part of it. */
+function stacked({ labels, series, colors, height }) {
+  const W=352, H=height||160, T=14, B=16;
+  const ih=H-T-B, n=labels.length||1;
+  const tot=labels.map((_,i)=>series.reduce((s,sr)=>s+Math.abs(sr.values[i]||0),0));
+  /* Wide columns, thin gaps. At twelve months a 62% bar leaves more air than
+     ink and the shape gets harder to read, not easier. */
+  const max=Math.max(1,...tot), step=W/n, bw=Math.min(30, step*0.86);
+  const y=(v)=>T+ih-(v/max)*ih;
+  let g='';
+  labels.forEach((lab,i)=>{
+    const cx=step*i+step/2; let acc=0;
+    series.forEach((sr,si)=>{
+      const v=Math.abs(sr.values[i]||0); if(!v) return;
+      const y1=y(acc+v), raw=y(acc)-y1;
+      /* Take the 2px separator out of TALL segments only. August 2026 is 4.7%
+         of July and its eight segments are all under two pixels, so
+         subtracting a flat 2 made the whole month disappear from the chart
+         while the table still showed $4,074. A thin bar is honest; no bar is
+         a lie. */
+      const h = raw>4 ? raw-2 : Math.max(raw,0.6);
+      if (h>0) g+=`<rect x="${(cx-bw/2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}"
+        height="${h.toFixed(1)}" rx="${acc+v>=tot[i]-.01?3:0}" fill="var(${colors[si]})"/>`;
+      acc+=v;
+    });
+    /* Total above each column. One month can be ten times another - July, the
+       move to France - and then every other bar is a sliver whose height says
+       nothing. The number is readable when the shape is not. */
+    if (tot[i] > max*0.06)
+      g+=`<text class="vlab sm" x="${cx.toFixed(1)}" y="${(y(tot[i])-3.5).toFixed(1)}"
+        text-anchor="middle">${kk2(tot[i])}</text>`;
+    g+=`<text class="tick" x="${cx.toFixed(1)}" y="${H-4}" text-anchor="middle">${esc(lab)}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+
+/* A line over time, with real gaps left empty rather than bridged. */
+function line({ points, height, color }) {
+  const W=352, H=height||140, T=10, B=16, Lp=0;
+  const ih=H-T-B;
+  if (points.length<2) return `<p class="hint">Not enough month-ends yet.</p>`;
+  const mn=(m)=>(+m.slice(0,4))*12+(+m.slice(5,7));
+  const m0v=mn(points[0].m), span=Math.max(1, mn(points[points.length-1].m)-m0v);
+  const max=Math.max(1,...points.map((p)=>p.v));
+  const x=(p)=>Lp+(W-Lp)*(mn(p.m)-m0v)/span, y=(v)=>T+ih-(v/max)*ih;
+  const segs=[]; let cur=[points[0]];
+  for (let i=1;i<points.length;i++){
+    if (mn(points[i].m)-mn(points[i-1].m) > 2){ segs.push(cur); cur=[]; }
+    cur.push(points[i]);
+  }
+  segs.push(cur);
+  let g=`<line class="gl" x1="0" y1="${T+ih}" x2="${W}" y2="${T+ih}"/>`;
+  for (const s of segs){
+    if (s.length<2){ if(s.length) g+=`<circle cx="${x(s[0]).toFixed(1)}" cy="${y(s[0].v).toFixed(1)}" r="2.5" fill="var(${color||'--c1'})"/>`; continue; }
+    const d=s.map((p,i)=>`${i?'L':'M'}${x(p).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+    g+=`<path d="${d}" fill="none" stroke="var(${color||'--c1'})" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  if (segs.length>1){
+    const a=segs[0][segs[0].length-1], b=segs[1][0];
+    g+=`<line x1="${x(a).toFixed(1)}" y1="${T}" x2="${x(a).toFixed(1)}" y2="${T+ih}" class="gl" stroke-dasharray="2 3"/>`
+     + `<line x1="${x(b).toFixed(1)}" y1="${T}" x2="${x(b).toFixed(1)}" y2="${T+ih}" class="gl" stroke-dasharray="2 3"/>`
+     + `<text class="tick" x="${((x(a)+x(b))/2).toFixed(1)}" y="${(T+ih/2).toFixed(1)}" text-anchor="middle">no data</text>`;
+  }
+  /* Keep 34px between labels. Time-proportional spacing puts 2015-12 and
+     2016-01 a millimetre apart, so "every January plus the ends" collided into
+     an unreadable smudge at both edges. */
+  let lastX=-99;
+  points.forEach((p,i)=>{
+    const isEnd = i===0 || i===points.length-1;
+    if (!isEnd && p.m.slice(5)!=='01') return;
+    const px=x(p);
+    if (!isEnd && Math.abs(px-lastX)<34) return;
+    if (i===points.length-1 && px-lastX<34) return;
+    lastX=px;
+    g+=`<text class="tick" x="${px.toFixed(1)}" y="${H-4}" text-anchor="${
+      i===0?'start':i===points.length-1?'end':'middle'}">${p.m.slice(0,4)}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${g}</svg>`;
+}
+
+const legend = (names,colors) => `<div class="legend">${names.map((n,i)=>
+  `<span><span class="sw" style="background:var(${colors[i]})"></span>${esc(n)}</span>`).join('')}</div>`;
+
+/* ======================================================================= TABS */
+/* Today used to be its own tab. It was the Year tab with the year frozen to
+   this one, so it is now the first card of Year and the stepper decides which
+   year "current" means. Six tabs also breathe better than seven at 384px. */
+const TABS = [
+  ['year','Year','<path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8"/><rect x="12" y="6" width="3" height="12"/><rect x="17" y="13" width="3" height="5"/>'],
+  ['spend','Activity','<path d="M3 17 9 11l4 4 8-8"/><path d="M14 7h7v7"/>'],
+  ['accounts','Accounts','<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>'],
+  ['history','History','<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>'],
+  ['bills','Bills','<path d="M6 2h12v20l-3-2-3 2-3-2-3 2Z"/><path d="M9 7h6M9 11h6"/>'],
+  ['girls','Kids','<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M15 20c0-2.3 1-3.6 3-3.6s3 1.3 3 3.6"/>'],
+];
+
+function renderNav(){
+  /* The warning count rides on the Accounts tab rather than the top bar:
+     that is where the accounts are, and that is where you go to act on it. */
+  const warn = live().filter((f)=>f.severity==='high').length;
+  document.getElementById('nav').innerHTML = TABS.map(([id,label,ic])=>
+    `<button data-tab="${id}" class="${state.tab===id?'active':''}">
+      <span class="navico">
+        <svg viewBox="0 0 24 24">${ic}</svg>
+        ${id==='accounts'&&warn?`<span class="navwarn">${warn>99?'99+':warn}</span>`:''}
+      </span>${label}</button>`).join('');
+  document.querySelectorAll('nav button').forEach((b)=>b.onclick=()=>{
+    state.tab=b.dataset.tab; state.account=null; render();
+  });
+}
+
+/* Folded into the Year tab, which now answers "where does it stand" for the
+   year you are looking at rather than only for today. Kept as a function
+   because the Year tab calls it with an as-of month. */
+function currentCard(asOf, isNow){
+  const o = { ...opts(), asOf };
+  const s = C.splits(o);
+  const w = C.wealth(opts());
+  const last = w.filter((p)=>p.month<=asOf).pop() || {};
+  const catCols = s.category.map((p)=>(REG.CATEGORY[p.key]||{}).color||'--c6');
+  /* Against the same point a year earlier. A balance on its own says nothing
+     about whether the year went well. */
+  const before = C.splits({ ...opts(), asOf: `${+asOf.slice(0,4)-1}-12` });
+  const delta = before.total ? s.total - before.total : null;
+  const pc = before.total ? delta/Math.abs(before.total)*100 : null;
+
+  return `
+  <div class="card">
+    <h2>Net worth <button class="gbtn ghost" data-explain="networth">?</button></h2>
+    <div class="hero">${m0(s.total)}${delta!==null?`<span class="herodelta"
+      style="color:${delta>=0?'var(--good)':'var(--bad)'}">${delta>=0?'+':''}${m0(delta)}
+      <i>${delta>=0?'+':''}${pc.toFixed(1)}%</i></span>`:''}</div>
+    <div class="heroSub">across ${s.accounts.length} accounts${
+      store.excludeOwners.length?`, excluding ${store.excludeOwners.map((o)=>D.owners[o]||o).join(' and ')}`:''}</div>
+
+    <div style="margin-top:16px">${compactBar(
+      s.currency.map((p)=>({label:p.label==='USD'?'Dollars':p.label==='EUR'?'Euros':p.label, value:p.value})),
+      ['--c1','--c2','--c6'])}</div>
+
+    <div style="margin-top:14px">${compactBar(s.category, catCols)}</div>
+
+    ${Math.abs(last.excludedAsset||0)>1?`<div class="kpis" style="margin-top:14px">
+      <div class="kpi" style="background:rgba(59,130,246,.12)">
+        <div class="l">Not counted here</div>
+        <div class="v" style="color:var(--accent2)">${m0(last.excludedAsset)}</div>
+        <div class="n">${C.latest({...o, includeClosed:true}).filter((a)=>a.inWealth===false&&Math.abs(a.shown)>1)
+          .map((a)=>esc(a.key||a.code)).join(', ')} — not money until exercised</div></div>
+    </div>`:''}
+  </div>`;
+}
+
+/* -------------------------------------------------------------------- Year --*/
+const SERIES2 = [['all','All'],['cash','Cash'],['savings','Savings'],['estate','Property']];
+
+/* The accumulating savings table. Month by month, but cumulative: what you had
+   paid in by then, what it had grown by then, and the two as a ratio. $100 in
+   with $50 of growth is +50%, which is the number that tells you whether the
+   money is working. */
+const SAVCUR = [['', 'Both'], ['EUR', 'Euro'], ['USD', 'Dollar']];
+
+function savingsGroup(Y){
+  const o = { ...opts(), onlyCurrency: state.savCur || '' };
+  const sv = C.savingsMonths(Y, o);
+  const ms = Object.keys(sv).filter((m)=>(Y<YEAR || m<=NOW) && sv[m].seen);
+  /* The columns are LIFETIME: what has ever been paid in, what it has ever
+     grown by, and the balance those two add up to. Your sheet keeps the
+     Contributions and Interest columns cumulative from the day each account
+     opened, and paid-in + growth = balance in 997 of its 998 rows, so the
+     ratio between them is a real return. */
+  const rows = ms.map((m)=>({ m,
+    pin: sv[m].paidInTotal, grw: sv[m].growthTotal, bal: sv[m].balance,
+    pc: Math.abs(sv[m].paidInTotal) > 0.5
+      ? sv[m].growthTotal/Math.abs(sv[m].paidInTotal)*100 : null }));
+  const last = rows[rows.length-1];
+  const first = rows[0];
+  /* This year's movement is the sum of the MONTHLY deltas, not the difference
+     between the lifetime ends. An account that first appears in March would
+     otherwise have its whole history counted as paid in this year. */
+  const yPin = ms.reduce((t,m)=>t+sv[m].paidIn, 0);
+  const yGrw = ms.reduce((t,m)=>t+sv[m].growth, 0);
+  /* The MEASURED balance change, not paid-in plus growth. They differ by
+     about a thousand dollars in 2026 because a few rows leave Contributions
+     or Interest blank while the balance still moves - deriving it would hide
+     that, and the gap is worth seeing. */
+  const openBal = first ? first.bal - sv[ms[0]].paidIn - sv[ms[0]].growth : 0;
+  const yBal = last ? last.bal - openBal : 0;
+
+  return `
+  <div class="card">
+    <h2>Savings
+      <span style="display:flex;align-items:center;gap:7px">
+        <select id="savCur" class="inlinesel">${SAVCUR.map(([k,l])=>
+          `<option value="${k}" ${(state.savCur||'')===k?'selected':''}>${l}</option>`).join('')}</select>
+        <button class="gbtn ghost" data-explain="savtable">?</button>
+      </span></h2>
+    ${rows.length ? `<div class="scroll"><table>
+      <thead><tr><th>Month</th><th>Paid in</th><th>Growth</th><th>%</th><th>Balance</th></tr></thead>
+      <tbody>${rows.map((r)=>`<tr>
+        <td>${mLabel(r.m)}</td>
+        <td>${tnum(r.pin)}</td>
+        <td style="color:${r.grw>=0?'var(--good)':'var(--bad)'}">${tnum(r.grw)}</td>
+        <td style="color:${r.pc===null?'var(--muted)':r.pc>=0?'var(--good)':'var(--bad)'}">${
+          r.pc===null?'—':(r.pc>0?'+':'')+r.pc.toFixed(0)+'%'}</td>
+        <td><b>${tnum(r.bal)}</b></td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="kpis" style="margin-top:12px">
+      <div class="kpi"><div class="l">Paid in this year</div>
+        <div class="v" style="font-size:15px">${m0(yPin)}</div></div>
+      <div class="kpi"><div class="l">Growth this year</div>
+        <div class="v" style="font-size:15px;color:${yGrw>=0?'var(--good)':'var(--bad)'}">${
+          yGrw>=0?'+':''}${m0(yGrw)}</div></div>
+      <div class="kpi"><div class="l">Balance change</div>
+        <div class="v" style="font-size:15px;color:${yBal>=0?'var(--good)':'var(--bad)'}">${
+          yBal>=0?'+':''}${m0(yBal)}</div></div>
+    </div>`
+    : `<div class="hint">No savings balances recorded for ${Y}${
+        state.savCur?' in '+state.savCur:''}.</div>`}
+  </div>`;
+}
+
+
+function tabYear(){
+  const Y = state.year;
+  const o = opts();
+  const f = C.flows(Y, o);
+  /* Cash only, for the Cash table. "In and out" that quietly includes an IRA
+     contribution landing in a fund is not the household's cash flow. */
+  const fc = C.flows(Y, { ...o, onlyCategory:'cash' });
+  /* Cut at today only for the current year. An earlier year is complete, and
+     hiding October to December of 2016 because it is past September would be
+     nonsense. */
+  const ms = Object.keys(f).filter((m)=> Y<YEAR ? true : m<=NOW)
+    .filter((m)=>{ const b=f[m]; return Y<YEAR ? (b.income||b.spend||b.tax||b.saved) : true; });
+  const sum = (kx)=>ms.reduce((s,m)=>s+f[m][kx],0);
+  /* The Summary is built by CLASS, not by the row type the importer inferred:
+     income includes Interest, taxes exclude the property tax filed under
+     Home, and cash left is in minus everything out. */
+  const YS = C.yearSummary(Y, { ...o, upto: Y<YEAR ? Y+'-12' : NOW });
+  const sumC = (kx)=>ms.reduce((s,m)=>s+fc[m][kx],0);
+  const w = C.wealth(o);
+  const inY = w.filter((p)=>p.month.slice(0,4)===String(Y));
+  const first = inY[0] || w[0];
+  const last = inY[inY.length-1] || w[w.length-1];
+  const growth = last && first ? last.total-first.total : 0;
+  const partial = Y===YEAR;
+
+  /* Cash, savings and property stacked month by month. Always twelve columns,
+     even in the current year: an empty October is information, and a chart
+     that grows a column a month makes this year look different in kind from
+     every other one rather than just unfinished. */
+  const byMonth = {}; for (const p of inY) byMonth[p.month] = p;
+  const wm = Array.from({length:12}, (_,i)=>{
+    const m = `${Y}-${String(i+1).padStart(2,'0')}`;
+    return byMonth[m] || { month:m, cash:0, savings:0, estate:0, empty:true };
+  });
+  const wsel = SERIES2.some(([k])=>k===state.wsel) ? state.wsel : 'all';
+  const wkeys = wsel==='all' ? ['cash','savings','estate'] : [wsel];
+  const stackCols = wkeys.map((k)=>REG.CATEGORY[k].color);
+
+  const sv = C.savingsMonths(Y, o);
+  const svMs = Object.keys(sv).filter((m)=> (Y<YEAR || m<=NOW) && sv[m].seen);
+  const svSum = (kx)=>svMs.reduce((s,m)=>s+sv[m][kx],0);
+
+  const asOf = partial ? NOW : `${Y}-12`;
+  const cashLeft = sumC('income')+sumC('spend')+sumC('tax')+sumC('saved')+sumC('oneoff');
+
+  if (DS.isEmpty(D)) return `
+  <div class="card">
+    <h2>Nothing in here yet</h2>
+    <div class="hint" style="margin-top:0">Two ways to start.</div>
+    <button class="btn primary" style="margin-top:12px" data-go-import="1">Import a file</button>
+    <button class="btn" data-go="accounts">Create an account</button>
+    
+  </div>`;
+
+  return `
+  ${currentCard(asOf, partial)}
+
+  <div class="card">
+    <h2>Monthly <span class="segs">${SERIES2.map(([k,l])=>
+      `<button class="seg ${k===wsel?'on':''}" data-wsel="${k}">${esc(l)}</button>`).join('')}</span></h2>
+    ${wm.some((p)=>!p.empty) ? stacked({
+      labels: wm.map((p)=>mLabel(p.month)),
+      series: wkeys.map((k)=>({ name:REG.CATEGORY[k].label, values:wm.map((p)=>p[k]) })),
+      colors: stackCols, height:172 })
+      : `<div class="hint">No month-ends recorded for ${Y}.</div>`}
+  </div>
+
+  ${savingsGroup(Y)}
+
+  <div class="card">
+    <h2>Summary <span class="muted" style="text-transform:none;letter-spacing:0">${Y} · ${ms.length} months</span></h2>
+    <div class="kpis">
+      <div class="kpi"><button class="kq" data-explain="in">?</button><div class="l">In</div>
+        <div class="v" style="color:var(--good);font-size:15px">${m0(YS.in)}</div></div>
+      <div class="kpi"><button class="kq" data-explain="out">?</button><div class="l">Out</div>
+        <div class="v" style="color:var(--bad);font-size:15px">${m0(YS.out)}</div></div>
+      <div class="kpi"><button class="kq" data-explain="taxes">?</button><div class="l">Taxes</div>
+        <div class="v" style="color:var(--bad);font-size:15px">${m0(YS.taxes)}</div></div>
+      <div class="kpi"><button class="kq" data-explain="savings">?</button><div class="l">Savings</div>
+        <div class="v" style="color:var(--accent);font-size:15px">${m0(YS.savings)}</div></div>
+    </div>
+    <div class="kpis" style="margin-top:8px">
+      <div class="kpi"><button class="kq" data-explain="cashleft">?</button><div class="l">Cash left</div>
+        <div class="v" style="color:${YS.left>=0?'var(--good)':'var(--bad)'}">${
+          YS.left>=0?'+':''}${m0(YS.left)}</div>
+        <div class="n">in − (out + taxes + savings)</div></div>
+      <div class="kpi"><button class="kq" data-explain="worth">?</button><div class="l">Net worth change</div>
+        <div class="v" style="color:${growth>=0?'var(--good)':'var(--bad)'}">${growth>=0?'+':''}${m0(growth)}</div>
+        <div class="n">incl. market moves</div></div>
+    </div>
+    ${Math.abs(sum('oneoff'))>1?`<div class="kpis" style="margin-top:8px">
+      <div class="kpi" style="background:rgba(59,130,246,.12)">
+        <button class="kq" data-explain="oneoff">?</button>
+        <div class="l">One-offs, held apart</div>
+        <div class="v" style="color:var(--accent2)">${sum('oneoff')>=0?'+':''}${m0(sum('oneoff'))}</div></div>
+    </div>`:''}
+  </div>`;
+}
+
+/* Which accounts a table is built from. A figure whose scope you cannot check
+   is a figure you have to take on trust. */
+function openWhich(category){
+  /* Only the accounts that existed that year. Listing every account ever,
+     most of them annotated "not open in 2026", answered a question nobody
+     asked and got the answer wrong besides. */
+  const Y = state.year;
+  const list = C.accountsIn(category, opts())
+    .filter((a)=>(a.years||[]).includes(Y) || a.created);
+  const lat = C.latest({ ...opts(), includeClosed:true, asOf:`${state.year}-12` });
+  const label = (REG.CATEGORY[category]||{}).label || category;
+  document.getElementById('sheet').innerHTML = `
+  <div class="sheet"><div class="wrap">
+    <header><div><h1>${esc(label)}</h1>
+      <div class="hdrsub">the accounts behind that table</div></div>
+      <div class="hdrright"><button class="hdrbtn" id="closeSheet">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div></header>
+    <div class="card">
+      <div class="rows">${list.map((a)=>{
+        const l = lat.find((x)=>x.code===a.code);
+        return `<div class="row flat">
+          <div><div class="code">${esc(a.key||a.code)}</div>
+            <div class="sub">${esc(a.bank||a.subtype||'')} · ${esc(a.ownerName)}</div></div>
+          <div class="amt"><b>${l?m0(l.native, symOf(a.currency)):'—'}</b></div>
+        </div>`;}).join('')}</div>
+      ${!list.length?`<div class="hint">None open in ${Y}.</div>`:''}
+    </div>
+  </div></div>`;
+  document.getElementById('closeSheet').onclick = ()=>{ document.getElementById('sheet').innerHTML=''; };
+}
+
+/* ------------------------------------------------------- explaining a box --
+
+   Every figure in the Summary is a sum of something, and two of them look like
+   they should agree and do not. Rather than a paragraph of prose that goes
+   stale, each box opens its own working: where the number comes from, and the
+   live breakdown by source. If the two disagree, that is a fact about your
+   records and you should be able to see which side is which.               */
+
+function explainBox(kind){
+  const Y = state.year, o = opts();
+  const f = C.flows(Y, o);
+  const fc = C.flows(Y, { ...o, onlyCategory:'cash' });
+  const ms = Object.keys(f).filter((m)=> Y<YEAR || m<=NOW);
+  const sv = C.savingsMonths(Y, o);
+  const svms = Object.keys(sv).filter((m)=>(Y<YEAR||m<=NOW) && sv[m].seen);
+  const tot = (src,k)=>ms.reduce((s,m)=>s+(src[m]?src[m][k]:0),0);
+  const svTot = (k)=>svms.reduce((s,m)=>s+sv[m][k],0);
+  const YS = C.yearSummary(Y, { ...o, upto: Y<YEAR ? Y+'-12' : NOW });
+
+  /* Per-tag breakdown. "Where it comes from" answers which account; this
+     answers what it was for, which is the other half of checking a figure. */
+  const byTag = (pred) => {
+    const t={};
+    for (const r of C.rows(o)){
+      if (!r.month.startsWith(String(Y))) continue;
+      if (Y===YEAR && r.month>NOW) continue;
+      if (o.livingOnly && r.oneoff) continue;
+      if (!pred(r)) continue;
+      t[r.group]=(t[r.group]||0)+C.conv(r.amount,r.currency,r.month,state.cur);
+    }
+    return Object.entries(t).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+  };
+
+  /* Per-source breakdown, so the number can be checked rather than believed. */
+  const byAccount = (pred) => {
+    const t={};
+    for (const r of C.rows(o)){
+      if (!r.month.startsWith(String(Y))) continue;
+      if (Y===YEAR && r.month>NOW) continue;
+      if (o.livingOnly && r.oneoff) continue;
+      if (!pred(r)) continue;
+      t[r.account]=(t[r.account]||0)+C.conv(r.amount,r.currency,r.month,state.cur);
+    }
+    return Object.entries(t).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+  };
+  const paidInByAccount = () => {
+    const t={};
+    for (const a of D.accounts.filter((x)=>x.category==='savings')){
+      const h=D.positions.filter((p)=>p.code===a.code).sort((x,y)=>x.month<y.month?-1:1);
+      let v=0;
+      for (let i=1;i<h.length;i++){
+        if (!h[i].month.startsWith(String(Y))) continue;
+        if (Y===YEAR && h[i].month>NOW) continue;
+        if (h[i].contributions===null||h[i-1].contributions===null) continue;
+        v+=C.conv(h[i].contributions-h[i-1].contributions,a.currency,h[i].month,state.cur);
+      }
+      if (Math.abs(v)>0.5) t[a.key||a.code]=v;
+    }
+    return Object.entries(t).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+  };
+
+  const BOX = {
+    in: { title:'In', value: YS.in,
+      from:'Every entry in an Income category, which includes Interest.',
+      rows: byAccount((r)=>C.classOf(r.group)==='income'),
+      tags: byTag((r)=>C.classOf(r.group)==='income') },
+    out: { title:'Out', value: YS.out,
+      from:'Everything classed Necessary, Optional or Other.'
+        + (store.showOneOff?' One-offs are included — the 1 in the top bar is on.'
+          :' One-offs are excluded.'),
+      rows: byAccount((r)=>['essential','optional','other'].includes(C.classOf(r.group))),
+      tags: byTag((r)=>['essential','optional','other'].includes(C.classOf(r.group))) },
+    taxes: { title:'Taxes', value: YS.taxes,
+      from:'Every entry in the Tax category. Property tax is NOT here — it is '
+        + 'filed under Home, as a cost of the house.',
+      rows: byAccount((r)=>C.classOf(r.group)==='tax'),
+      tags: byTag((r)=>C.classOf(r.group)==='tax') },
+    savings: { title:'Savings', value: YS.savings,
+      from:'Everything tagged Savings. That currently covers two different '
+        + 'things: money moved into a savings account, AND the principal part '
+        + 'of a mortgage payment. Both build net worth, but they are not the '
+        + 'same decision — a second tag would split them.',
+      rows: byAccount((r)=>C.classOf(r.group)==='savings'),
+      tags: byTag((r)=>C.classOf(r.group)==='savings') },
+    paidin: { title:'Paid in', value: svTot('paidIn'),
+      from:'The Contributions column on each investment tab, month over month. '
+        + 'Recorded on the savings account itself, not in the ledger.',
+      rows: paidInByAccount() },
+    growth: { title:'Growth', value: svTot('growth'),
+      from:'The Interest column on each investment tab, month over month. '
+        + 'What the market did, as your sheet recorded it.',
+      rows: [] },
+    cashleft: { title:'Cash left', value: YS.left,
+      from:'In − (out + taxes + savings).', rows: [],
+      groups: [['The four parts', [['In', YS.in], ['Out', -YS.out],
+        ['Taxes', -YS.taxes], ['Savings', -YS.savings]]]] },
+    worth: { title:'Net worth change', value: (function(){
+        const w=C.wealth(o).filter((p)=>p.month.slice(0,4)===String(Y));
+        return w.length ? w[w.length-1].total - w[0].total : 0; })(),
+      from:'The roll-up at the end of the year minus the roll-up at the start. '
+        + 'Includes market moves and property, so it is not in minus out.', rows: [] },
+  };
+
+  /* Net worth: the same total sliced three ways, which is the only way to see
+     that the slices really are the same money. */
+  const lat = C.latest({ ...o, includeClosed:false, asOf: Y<YEAR ? Y+'-12' : NOW });
+  const mine = lat.filter((a)=>a.inWealth!==false && !C.ownerExcluded(a, store.excludeOwners));
+  const slice = (pred) => mine.filter(pred)
+    .map((a)=>[ (a.key||a.code) + (a.currency!==state.cur?' ('+a.currency+')':''), a.shown ])
+    .sort((x,y)=>Math.abs(y[1])-Math.abs(x[1]));
+  BOX.networth = { title:'Net worth', value: mine.reduce((t,a)=>t+a.shown,0),
+    from:'Every account you count, at its latest balance, converted at that '
+      + "month's own rate.",
+    groups: [
+      ['By currency — dollars', slice((a)=>a.currency==='USD')],
+      ['By currency — euros', slice((a)=>a.currency==='EUR')],
+      ['Cash', slice((a)=>a.category==='cash')],
+      ['Savings', slice((a)=>a.category==='savings')],
+      ['Property', slice((a)=>a.category==='estate')],
+    ].filter(([,l])=>l.length) };
+
+  const sb = C.savingsByAccount(Y, { ...o, onlyCurrency: state.savCur||'',
+    upto: Y<YEAR ? Y+'-12' : NOW });
+  BOX.savtable = { title:'Savings', value: sb.reduce((t,x)=>t+(x.balance||0),0),
+    from:'Paid in and growth are the Contributions and Interest columns on each '
+      + 'investment tab, month over month, accumulated. The percentage is growth '
+      + 'divided by what you paid in — $100 in with $50 of growth is +50%.',
+    groups: [['Paid in this year', sb.filter((x)=>Math.abs(x.paidIn)>0.5)
+        .map((x)=>[x.key, x.paidIn])],
+      ['Growth this year', sb.filter((x)=>Math.abs(x.growth)>0.5)
+        .map((x)=>[x.key, x.growth])],
+      ['Balance', sb.filter((x)=>x.balance).map((x)=>[x.key, x.balance])]]
+      .filter(([,l])=>l.length) };
+
+  /* One-offs list their entries rather than explaining themselves in a
+     paragraph — the four rows ARE the explanation. */
+  BOX.oneoff = { title: 'One-offs', value: (function(){
+      const g = C.flows(Y, o);
+      return Object.keys(g).filter((m)=>Y<YEAR||m<=NOW)
+        .reduce((t,m)=>t+g[m].oneoff, 0); })(),
+    from: 'Large one-time amounts sitting in an everyday category — a house '
+      + 'sale tagged Home, a car sale tagged Car. Held apart so they do not '
+      + 'net against the groceries. The 1 in the top bar puts them back in.',
+    rows: [],
+    entries: C.rows({ ...o, livingOnly:false }).filter((r)=>r.oneoff
+      && r.month.startsWith(String(Y)) && (Y<YEAR || r.month<=NOW)) };
+
+  const b = BOX[kind]; if (!b) return;
+
+  /* The one pair that looks contradictory and is not. */
+  const pair = (kind==='savings'||kind==='paidin') ? (function(){
+    const a=Math.abs(tot(f,'saved')), p=svTot('paidIn');
+    return `<div class="card">
+      <h2>Why these two differ</h2>
+      <div class="rows">
+        <div class="row flat"><div><div class="code">Savings</div>
+          <div class="sub">left your accounts</div></div>
+          <div class="amt"><b>${m0(a)}</b></div></div>
+        <div class="row flat"><div><div class="code">Paid in</div>
+          <div class="sub">arrived as contributions</div></div>
+          <div class="amt"><b>${m0(p)}</b></div></div>
+        <div class="row flat"><div><div class="code">Difference</div></div>
+          <div class="amt"><b style="color:var(--warn)">${m0(Math.abs(p-a))}</b></div></div>
+      </div>
+      <div class="hint">Two different records, not two views of one. They only
+        agree if every transfer out is matched by the Contributions column moving
+        on the other side — payroll into a 401k never appears in the ledger, and
+        a transfer into an account this app counts as cash never reaches a
+        Contributions column.</div>
+    </div>`;})() : '';
+
+  document.getElementById('sheet').innerHTML = `
+  <div class="sheet"><div class="wrap">
+    <header><div><h1>${esc(b.title)}</h1><div class="hdrsub">${Y}</div></div>
+      <div class="hdrright"><button class="hdrbtn" id="closeSheet">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div></header>
+    <div class="card">
+      <div class="hero">${m0(Math.abs(b.value))}</div>
+      <div class="hint">${esc(b.from)}</div>
+    </div>
+    ${(b.rows||[]).length?`<div class="card">
+      <h2>Where it comes from</h2>
+      <div class="rows">${b.rows.map(([k,v])=>`
+        <div class="row flat"><div><div class="code">${esc(k)}</div></div>
+          <div class="amt"><b style="color:${v<0?'var(--bad)':'var(--txt)'}">${
+            m0(v)}</b></div></div>`).join('')}</div>
+    </div>`:''}
+    ${(b.tags||[]).length?`<div class="card">
+      <h2>Per tag</h2>
+      <div class="rows">${b.tags.map(([k,v])=>`
+        <div class="row flat"><div><div class="code">${esc(tagName(k))}</div></div>
+          <div class="amt"><b style="color:${v<0?'var(--bad)':'var(--txt)'}">${
+            m0(v)}</b></div></div>`).join('')}</div>
+    </div>`:''}
+    ${(b.entries||[]).length?`<div class="card">
+      <h2>The entries
+        <span class="muted" style="text-transform:none;letter-spacing:0">${b.entries.length}</span></h2>
+      <div class="rows">${b.entries
+        .slice().sort((x,y)=>Math.abs(y.amount)-Math.abs(x.amount)).map((r)=>{
+          const v = C.conv(r.amount,r.currency,r.month,state.cur);
+          return `<div class="row flat"><div>
+            <div class="code" style="font-size:12.5px">${esc((r.party||'—').slice(0,24))}</div>
+            <div class="sub">${r.date} · ${esc(r.group)} · ${esc(r.account)}</div></div>
+            <div class="amt"><b style="color:${v<0?'var(--bad)':'var(--good)'}">${
+              m2(v)}</b></div></div>`;
+        }).join('')}</div>
+    </div>`:''}
+    ${(b.groups||[]).map(([label,list])=>`<div class="card">
+      <h2>${esc(label)}<span class="muted" style="text-transform:none;letter-spacing:0">${
+        m0(list.reduce((t,[,v])=>t+v,0))}</span></h2>
+      <div class="rows">${list.map(([k,v])=>`
+        <div class="row flat"><div><div class="code">${esc(k)}</div></div>
+          <div class="amt"><b style="color:${v<0?'var(--bad)':'var(--txt)'}">${
+            m0(v)}</b></div></div>`).join('')}</div>
+    </div>`).join('')}
+    ${pair}
+  </div></div>`;
+  document.getElementById('closeSheet').onclick = ()=>{
+    document.getElementById('sheet').innerHTML=''; };
+}
+
+
+/* ------------------------------------------------------------------- Spend --*/
+
+/* Elapsed months, so an average is per month lived rather than per month on
+   the calendar. Mid-September is 8.6, and dividing by 9 understates every
+   figure on the screen by the same wrong twelfth. */
+function monthsIn(yr){
+  if (yr < YEAR) return 12;
+  if (yr > YEAR) return 1;
+  const mm=+NOW.slice(5,7), d=+LAST_ENTRY.slice(8,10);
+  return (mm-1) + d/new Date(Date.UTC(yr, mm, 0)).getUTCDate();
+}
+
+/* Everything a category did in a year. Amounts are summed SIGNED, so a refund
+   tagged Food subtracts from Food - which is what "take the reimbursement
+   into account" has to mean for the average to be worth anything. */
+function spendByParent(Y){
+  const o = opts();
+  /* Everything with a monthly rhythm, not only spending: income, tax and what
+     went into savings belong in the same picture, coloured differently. */
+  const rows = C.rows(o).filter((r)=>+r.month.slice(0,4)===Y
+    && r.type!=='transfer' && r.type!=='interest'
+    && !(o.livingOnly && r.oneoff));
+  const out = {};
+  for (const r of rows){
+    const id=C.parentOf(r.group);
+    const b=out[id]||(out[id]={ id, total:0, months:{}, rows:[] });
+    const v=C.conv(r.amount,r.currency,r.month,state.cur);
+    b.total+=v; b.months[r.month]=(b.months[r.month]||0)+v; b.rows.push(r);
+  }
+  return out;
+}
+
+/* The order the sections appear in, and what each one is called on screen.
+   Necessities first because that is the part you cannot change. */
+const SPEND_SECTIONS = [
+  { cls:'essential', label:'Necessary', tone:'ess' },
+  { cls:'optional',  label:'Optional',  tone:'opt' },
+  { cls:'other',     label:'Other',     tone:'oth' },
+  { cls:'income',    label:'Income',    tone:'inc' },
+  { cls:'savings',   label:'Savings',   tone:'inc' },
+  { cls:'tax',       label:'Taxes',     tone:'inc' },
+];
+
+/* The month-by-month flow tables. They lived on Year, where they competed with
+   the net-worth picture; here they sit with the rest of the activity. */
+function flowTables(Y){
+  const o = opts();
+  const f = C.flows(Y, o);
+  const fc = C.flows(Y, { ...o, onlyCategory:'cash' });
+  const ms = Object.keys(f).filter((m)=> Y<YEAR ? true : m<=NOW)
+    .filter((m)=>{ const b=f[m]; return Y<YEAR ? (b.income||b.spend||b.tax||b.saved) : true; });
+  const sumC = (kx)=>ms.reduce((s2,m)=>s2+fc[m][kx],0);
+  const cashLeft = sumC('income')+sumC('spend')+sumC('tax')+sumC('saved')+sumC('oneoff');
+  const sv = C.savingsMonths(Y, o);
+  const svMs = Object.keys(sv).filter((m)=>(Y<YEAR||m<=NOW) && sv[m].seen);
+  const svSum = (kx)=>svMs.reduce((s2,m)=>s2+sv[m][kx],0);
+  return `
+  <div class="card">
+    <h2>Cash <button class="gbtn ghost" data-which="cash">?</button></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Month</th><th>In</th><th>Out</th><th>Tax</th><th>Saved</th><th>Left</th></tr></thead>
+      <tbody>${ms.map((m)=>`<tr><td>${mLabel(m)}</td>
+        <td style="color:var(--good)">${tnum(fc[m].income)}</td>
+        <td style="color:var(--bad)">${tnum(-fc[m].spend)}</td>
+        <td>${Math.abs(fc[m].tax)>1?tnum(Math.abs(fc[m].tax)):'—'}</td>
+        <td>${Math.abs(fc[m].saved)>1?tnum(Math.abs(fc[m].saved)):'—'}</td>
+        <td style="color:${fc[m].net>=0?'var(--good)':'var(--bad)'}">${tnum(fc[m].net)}</td></tr>`).join('')}
+        <tr><td><b>Year</b></td>
+          <td style="color:var(--good)"><b>${tnum(sumC('income'))}</b></td>
+          <td style="color:var(--bad)"><b>${tnum(-sumC('spend'))}</b></td>
+          <td><b>${tnum(Math.abs(sumC('tax')))}</b></td>
+          <td><b>${tnum(Math.abs(sumC('saved')))}</b></td>
+          <td style="color:${cashLeft>=0?'var(--good)':'var(--bad)'}"><b>${tnum(cashLeft)}</b></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Savings <button class="gbtn ghost" data-which="savings">?</button></h2>
+    ${svMs.length ? `<div class="scroll"><table>
+      <thead><tr><th>Month</th><th>Paid in</th><th>Growth</th><th>Balance</th></tr></thead>
+      <tbody>${svMs.map((m)=>`<tr><td>${mLabel(m)}</td>
+        <td>${Math.abs(sv[m].paidIn)>1?tnum(sv[m].paidIn):'—'}</td>
+        <td style="color:${sv[m].growth>=0?'var(--good)':'var(--bad)'}">${
+          Math.abs(sv[m].growth)>1?tnum(sv[m].growth):'—'}</td>
+        <td><b>${tnum(sv[m].balance)}</b></td></tr>`).join('')}
+        <tr><td><b>Year</b></td>
+          <td><b>${tnum(svSum('paidIn'))}</b></td>
+          <td style="color:${svSum('growth')>=0?'var(--good)':'var(--bad)'}"><b>${tnum(svSum('growth'))}</b></td>
+          <td></td></tr>
+      </tbody>
+    </table></div>`
+    : `<div class="hint">No savings balances recorded for ${Y}.</div>`}
+  </div>
+`;
+}
+
+
+function tabSpend(){
+  if (state.budgetEdit) return budgetForm();
+  if (state.budget) return budgetDetail(state.budget);
+  if (state.prevDraft) return previsionEditor();
+  if (state.spendCat) return spendDetail(state.spendCat);
+  const Y = state.year;
+  const tax = taxonomy();
+  const now = spendByParent(Y), prev = spendByParent(Y-1);
+  const div = monthsIn(Y), pdiv = monthsIn(Y-1);
+  const cells = tax.PARENTS.filter((p)=>now[p.id] || prev[p.id])
+    .map((p)=>{
+      const avg = Math.abs((now[p.id]||{total:0}).total)/div;
+      const pavg = prev[p.id] ? Math.abs(prev[p.id].total)/pdiv : null;
+      return { p, avg, pavg, diff: pavg===null?null:avg-pavg };
+    });
+  const grand = cells.reduce((s,c)=>s+c.avg,0);
+
+  return `
+  <div class="card">
+    <h2>Spending
+      <span class="muted" style="text-transform:none;letter-spacing:0">${m0(grand)}/mo</span></h2>
+    ${SPEND_SECTIONS.map((sec)=>{
+      const mine = cells.filter((c)=>(c.p.cls||'other')===sec.cls);
+      if (!mine.length) return '';
+      const tot = mine.reduce((t,c)=>t+c.avg,0);
+      return `<div class="secttl ${sec.tone}">${esc(sec.label)}<span>${m0(tot)}/mo</span></div>
+      <div class="tiles">${mine.map((c)=>`
+        <div class="tile cat ${sec.tone}" data-opencat="${esc(c.p.id)}">
+          <div class="k">${esc(c.p.label)}</div>
+          <div class="v">${m0(c.avg)}</div>
+          <div class="s ${c.diff===null?'':c.diff>0?'up':'down'}">${
+            c.diff===null ? '—'
+            : (c.diff>0?'+':'−')+m0(Math.abs(c.diff)).replace(/^[-+]/,'')}</div>
+        </div>`).join('')}</div>`;
+    }).join('')}
+  </div>
+
+  ${previsionCard(Y)}
+
+  ${budgetCard()}
+
+  ${flowTables(Y)}`;
+}
+
+/* One category, opened. The chart answers "when", the list answers "on what",
+   and the two are the same numbers - tapping a column filters the list. */
+function spendDetail(id){
+  const Y = state.year;
+  const tax = taxonomy();
+  const label = (tax.byId[id]||{}).label || id;
+  const data = spendByParent(Y)[id] || { total:0, months:{}, rows:[] };
+  const ms = Object.keys(data.months).sort();
+  const sel = state.spendMonth && ms.includes(state.spendMonth) ? state.spendMonth : null;
+  const div = monthsIn(Y);
+  const prev = spendByParent(Y-1)[id];
+  const pavg = prev ? Math.abs(prev.total)/monthsIn(Y-1) : null;
+  const avg = Math.abs(data.total)/div;
+
+  const base = sel ? data.rows.filter((r)=>r.month===sel) : data.rows;
+  const list = filterOps(base);
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-backcat="1">‹ Spending</span> ${esc(label)}</h2>
+    <div class="hero">${m0(Math.abs(data.total))}</div>
+    <div class="heroSub">${Y} · ${m0(avg)} a month${
+      pavg!==null?` · <b style="color:${avg>pavg?'var(--bad)':'var(--good)'}">${
+        avg>pavg?'+':'−'}${m0(Math.abs(avg-pavg)).replace(/^[-+]/,'')}</b> against ${Y-1}`:''}</div>
+  </div>
+
+  <div class="card">
+    <h2>By month${sel?` <button class="gbtn ghost" data-monthclear="1">All</button>`:''}</h2>
+    ${ms.length ? columns({ labels:ms.map(mLabel), values:ms.map((m)=>Math.abs(data.months[m])),
+        color:'--c2', height:150, precise:true, keys:ms, dataAttr:'data-pickmonth',
+        selected: sel||undefined })
+      : `<div class="hint">Nothing in ${Y}.</div>`}
+    <div class="hint" style="margin-top:2px">${sel
+      ? `Showing ${MON[+sel.slice(5,7)-1]} only.` : 'Tap a month to filter the list below.'}</div>
+  </div>
+
+  ${opFilterCard(base, list.length)}
+
+  <div class="card">
+    <h2>${sel?MON[+sel.slice(5,7)-1]+' '+Y:'Every entry'}
+      <span class="muted" style="text-transform:none;letter-spacing:0">${list.length}</span></h2>
+    <div class="rows">${list.slice(0,200).map((r)=>{
+      const v = C.conv(r.amount,r.currency,r.month,state.cur);
+      /* Credits green, debits red. A refund inside a spending category is the
+         thing most easily misread as another cost. */
+      return `<div class="row flat" data-editentry="${esc(r.src)}"><div>
+        <div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,26))}</div>
+        <div class="sub">${r.date.slice(5)} · ${esc(r.group)} · ${esc(r.account)}${
+          r.oneoff?' · <b>one off</b>':''}</div></div>
+        <div class="amt"><b style="color:${v>0?'var(--good)':'var(--bad)'}">${m2(v)}</b>
+        ${r.currency!==state.cur?`<span class="alt">${m2(r.amount,symOf(r.currency))}</span>`:''}</div>
+      </div>`;}).join('')}</div>
+    ${list.length>200?`<div class="hint">Newest 200 of ${list.length}.</div>`:''}
+    ${!list.length?`<div class="hint">Nothing here.</div>`:''}
+  </div>`;
+}
+
+/* ------------------------------------------------------------- Budgets ----
+
+   A budget is a name, an amount, and a tag you can put on entries. Tag a
+   purchase with it and it counts against the budget - which is how "how much
+   of the kitchen money is left" gets answered without inventing a category
+   that then pollutes every year-on-year comparison.
+
+   It is deliberately NOT a category: a fridge is Furniture and also
+   "Kitchen 2026", and both facts stay true.                                 */
+
+const budgets = () => store.budgets || (store.budgets = []);
+const budgetOf = (id) => budgets().find((b)=>b.id===id);
+const budgetRows = (id) => C.rows({ ...opts(), livingOnly:false })
+  .filter((r)=>r.budget===id);
+const budgetSpent = (id) => budgetRows(id)
+  .reduce((s,r)=>s+Math.abs(C.conv(r.amount,r.currency,r.month,state.cur)),0);
+
+/* A closed budget is finished business. It stays visible in the year it closed
+   and every year before - the spending really happened - and disappears from
+   the years after, because a kitchen you finished in 2024 is not a 2026
+   concern. */
+const budgetLive = (b, Y) => !b.closed || +String(b.closed).slice(0,4) >= Y;
+
+function budgetCard(){
+  const list = budgets().filter((b)=>budgetLive(b, state.year));
+  return `
+  <div class="card">
+    <h2>Budget <button class="gbtn" data-newbudget="1">+</button></h2>
+    ${!list.length?``
+    : `<div class="rows">${list.map((b)=>{
+        const spent = budgetSpent(b.id), pc = b.amount ? spent/b.amount*100 : 0;
+        const over = spent > b.amount;
+        return `<div class="row" data-openbudget="${esc(b.id)}">
+          <div style="flex:1;min-width:0">
+            <div class="code">${esc(b.name)}${b.closed?`<span class="tag">closed</span>`:''}</div>
+            <div class="bbar"><i style="width:${Math.min(100,pc).toFixed(1)}%;
+              background:${over?'var(--bad)':'var(--c3)'}"></i></div>
+          </div>
+          <div class="amt"><b style="color:${over?'var(--bad)':'var(--txt)'}">${m0(spent)}</b>
+            <span class="alt">of ${m0(b.amount)}</span></div>
+        </div>`;}).join('')}</div>`}
+  </div>`;
+}
+
+function budgetForm(){
+  const b = state.budgetEdit;
+  return `
+  <div class="card">
+    <h2><span class="act" data-bcancel="1">‹ Spend</span> ${b.id?'Edit budget':'New budget'}</h2>
+    <div class="field"><label>Name</label>
+      <input id="bName" value="${esc(b.name||'')}" placeholder="e.g. Kitchen, Italy 2026"></div>
+    <div class="field"><label>Amount in ${esc(state.cur)}</label>
+      <input id="bAmount" value="${esc(String(b.amount||''))}" inputmode="decimal" placeholder="0"></div>
+    <div class="btnrow">
+      <button class="btn primary" data-bsave="1">${b.id?'Save':'Create'}</button>
+      <button class="btn" data-bcancel="1">Cancel</button>
+    </div>
+    ${b.id?`<button class="btn danger" style="margin-top:7px" data-bdelete="${esc(b.id)}">
+      Delete this budget</button>`:''}
+    
+  </div>`;
+}
+
+/* Inside a budget: what it has eaten, grouped by the category the spending
+   actually belongs to. A kitchen budget is mostly Furniture with some Home
+   and a surprising amount of Misc, and that breakdown is the useful part. */
+function budgetDetail(id){
+  const b = budgetOf(id);
+  if (!b) { state.budget=null; return tabSpend(); }
+  const rows = budgetRows(id);
+  const spent = budgetSpent(id);
+  const left = b.amount - spent;
+  const tax = taxonomy();
+  const byCat = {};
+  for (const r of rows){
+    const p = C.parentOf(r.group);
+    (byCat[p] || (byCat[p]={ id:p, label:(tax.byId[p]||{}).label||p, total:0, rows:[] }));
+    byCat[p].total += Math.abs(C.conv(r.amount,r.currency,r.month,state.cur));
+    byCat[p].rows.push(r);
+  }
+  const groups = tax.PARENTS.filter((p)=>byCat[p.id]).map((p)=>byCat[p.id]);
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-bback="1">‹ Activity</span>
+      <button class="gbtn ghost" data-bedit="${esc(id)}">Edit</button></h2>
+    <div class="heroSub" style="margin-top:0;color:var(--txt);font-size:15px;font-weight:700">${
+      esc(b.name)}${b.closed?' <span class="tag">closed</span>':''}</div>
+    <div class="hero">${m0(spent)}</div>
+    <div class="heroSub">of ${m0(b.amount)} — <b style="color:${
+      left>=0?'var(--good)':'var(--bad)'}">${left>=0?m0(left)+' left':m0(-left)+' over'}</b></div>
+    <div class="bbar" style="margin-top:12px;height:10px"><i style="width:${
+      Math.min(100, b.amount?spent/b.amount*100:0).toFixed(1)}%;
+      background:${left<0?'var(--bad)':'var(--c3)'}"></i></div>
+    <div class="heroSub" style="margin-top:8px">${rows.length} entr${rows.length===1?'y':'ies'}
+      across ${groups.length} categor${groups.length===1?'y':'ies'}${
+      b.closed?` · closed ${esc(b.closed)}`:''}</div>
+    <button class="btn ${b.closed?'':'danger'}" style="margin-top:12px"
+      data-bclose="${esc(id)}">${b.closed?'Reopen':'Close'}</button>
+  </div>
+
+  ${!rows.length?`<div class="card"><div class="hint" style="margin-top:0">Nothing tagged with this
+    budget yet. Open an entry and pick it under <b>Budget</b>.</div></div>`
+  : groups.map((g)=>`
+    <div class="card">
+      <h2>${esc(g.label)} <span class="muted"
+        style="text-transform:none;letter-spacing:0">${m0(g.total)}</span></h2>
+      <div class="rows">${g.rows
+        .sort((x,y)=> x.date<y.date?1:-1).map((r)=>{
+        const v = C.conv(r.amount,r.currency,r.month,state.cur);
+        return `<div class="row flat" data-editentry="${esc(r.src)}"><div>
+          <div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,26))}</div>
+          <div class="sub">${r.date} · ${esc(r.group)} · ${esc(r.account)}</div></div>
+          <div class="amt"><b style="color:${v>0?'var(--good)':'var(--bad)'}">${m2(v)}</b></div>
+        </div>`;}).join('')}</div>
+    </div>`).join('')}`;
+}
+
+/* --------------------------------------------------------------- Previsions --
+
+   A prevision is a saved guess at the rest of a year: for each category, what
+   you expect to spend in each month still to come. The year's budget is then
+   the real figures for the months that have happened plus your guess for the
+   ones that have not - which is the only number worth looking at in
+   September, when a pure forecast ignores two thirds of the evidence and a
+   pure actual ignores Christmas.
+
+   Every prevision is kept, dated, and navigable, so you can see what you
+   thought in March against what you think now.                              */
+
+const prevList = (Y) => (store.previsions||[]).filter((p)=>p.year===Y)
+  .sort((a,b)=>(a.created<b.created?-1:1));
+
+/* Months still to come, including the one we are in - you are part way
+   through September, so September is a guess too. */
+function futureMonths(Y){
+  const out=[];
+  const from = Y<YEAR ? 13 : +NOW.slice(5,7);
+  for (let i=from;i<=12;i++) out.push(`${Y}-${String(i).padStart(2,'0')}`);
+  return out;
+}
+const prevTotal = (entries) => (entries||[]).reduce((s,e)=>s+(+e.amount||0),0);
+
+/* The forecast for one category: real months as they happened, future months
+   as predicted. */
+function forecastCat(Y, id, prev){
+  const actual = spendByParent(Y)[id] || { months:{} };
+  const fut = futureMonths(Y);
+  let real=0, guess=0;
+  for (const [m,v] of Object.entries(actual.months)) if (!fut.includes(m)) real+=Math.abs(v);
+  const byMonth = (prev&&prev.cats&&prev.cats[id])||{};
+  for (const m of fut) guess += prevTotal(byMonth[m]);
+  return { real, guess, total: real+guess };
+}
+
+function previsionCard(Y){
+  const list = prevList(Y);
+  const idx = Math.min(Math.max(state.prevIdx===null||state.prevIdx===undefined
+    ? list.length-1 : state.prevIdx, 0), Math.max(0,list.length-1));
+  const cur = list[idx];
+  const tax = taxonomy();
+
+  if (!list.length) return `
+    <div class="card">
+      <h2>Previsions <button class="gbtn" data-newprev="1">+</button></h2>
+      <div class="hint" style="margin-top:0">Nothing planned for ${Y}.</div>
+    </div>`;
+
+  const cats = tax.PARENTS.filter((p)=>p.kind==='spend');
+  const rowsF = cats.map((p)=>({ p, ...forecastCat(Y,p.id,cur) }))
+    .filter((r)=>r.total>0.5);
+  const spendYear = rowsF.reduce((s,r)=>s+r.total,0);
+
+  /* Income, tax and savings are not forecast by hand - they are the year so
+     far carried forward at its own run rate. Stated, not hidden, because it
+     is an assumption and a wrong one in a year with a bonus. */
+  const f = C.flows(Y, opts());
+  const done = Object.keys(f).filter((m)=> Y<YEAR || m<=NOW);
+  const s = (k)=>done.reduce((t,m)=>t+f[m][k],0);
+  const rate = done.length ? 12/done.length : 1;
+  const gross = s('income')*rate, taxes = Math.abs(s('tax'))*rate;
+  const saved = Math.abs(s('saved'))*rate;
+  const net = gross - taxes;
+  const cash = net - spendYear - saved;
+
+  return `
+  <div class="card">
+    <h2>Previsions <button class="gbtn" data-newprev="1">+</button></h2>
+    ${list.length>1
+      ? `<div class="navrow">
+          <button class="ybtn" data-prevnav="-1" ${idx<=0?'disabled':''}>&lsaquo;&lsaquo;</button>
+          <div class="navval">${esc(String(cur.created).slice(0,10))}</div>
+          <button class="ybtn" data-prevnav="1" ${idx>=list.length-1?'disabled':''}>&rsaquo;&rsaquo;</button>
+        </div>
+        <div class="heroSub" style="margin-top:6px">${idx+1} of ${list.length}${
+          idx<list.length-1?' — an older one':''}</div>`
+      : `<div class="heroSub" style="margin-top:0">made ${esc(String(cur.created).slice(0,10))}</div>`}
+
+    <div class="kpis" style="margin-top:12px">
+      <div class="kpi"><div class="l">Income and taxes</div>
+        <div class="v">${m0(net)}</div>
+        <div class="n">${m0(gross)} gross − ${m0(taxes)} tax</div></div>
+      <div class="kpi"><div class="l">Savings and cash</div>
+        <div class="v" style="color:${cash>=0?'var(--good)':'var(--bad)'}">${m0(cash)}</div>
+        <div class="n">${m0(saved)} saved, ${m0(cash)} left over</div></div>
+    </div>
+
+    <div class="sepline"></div>
+
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="l">Spending, whole year</div>
+        <div class="v">${m0(spendYear)}</div>
+        <div class="n">${m0(spendYear/12)} a month</div></div>
+    </div>
+    <div class="tiles">${rowsF.map((r)=>`
+      <div class="tile cat" data-editprev="${esc(r.p.id)}">
+        <div class="k">${esc(r.p.label)}</div>
+        <div class="v">${m0(r.total/12)}</div>
+        <div class="s">${m0(r.total)}</div>
+      </div>`).join('')}</div>
+    
+  </div>`;
+}
+
+/* Entering a plan: one category, the months still to come, free-text lines so
+   "Gymnastics 300 / Dance 800" stays legible next year when you have
+   forgotten what the 1,100 was. */
+function previsionEditor(){
+  const Y = state.year;
+  const tax = taxonomy();
+  const draft = state.prevDraft;
+  const id = draft.cat;
+  const cats = tax.PARENTS.filter((p)=>p.kind==='spend');
+
+  if (!id) return `
+    <div class="card">
+      <h2><span class="act" data-prevcancel="1">‹ Activity</span> Plan what?</h2>
+      <div class="chips">${cats.map((p)=>
+        `<button class="chip" data-prevcat="${esc(p.id)}">${esc(p.label)}</button>`).join('')}</div>
+      
+    </div>`;
+
+  const fut = futureMonths(Y);
+  const byMonth = draft.cats[id] || (draft.cats[id] = {});
+  const total = fut.reduce((s,m)=>s+prevTotal(byMonth[m]),0);
+  const label = (tax.byId[id]||{}).label||id;
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-prevcat="">‹ Category</span> ${esc(label)}</h2>
+    <div class="hero" style="font-size:26px">${m0(total)}</div>
+    <div class="heroSub">${fut.length} month${fut.length>1?'s':''} still to come in ${Y}</div>
+  </div>
+
+  ${fut.map((m,i)=>`
+  <div class="card">
+    <h2>${MON[+m.slice(5,7)-1]}
+      <span>
+        ${i===0?`<button class="gbtn ghost" data-prevcopy="1">copy to all</button>`:''}
+        <button class="gbtn" data-prevadd="${m}">+</button>
+      </span></h2>
+    ${(byMonth[m]||[]).length ? (byMonth[m]||[]).map((e,j)=>`
+      <div class="row flat">
+        <div style="flex:1;min-width:0"><input data-pl="${m}|${j}" value="${esc(e.label||'')}"
+          placeholder="what for" style="width:100%"></div>
+        <div style="width:88px;margin-left:8px"><input data-pa="${m}|${j}" value="${esc(String(e.amount||''))}"
+          inputmode="decimal" style="width:100%;text-align:right"></div>
+        <span class="act" data-prevdel="${m}|${j}" style="margin-left:8px">✕</span>
+      </div>`).join('')
+    : `<div class="hint" style="margin-top:0">Nothing planned.</div>`}
+    ${(byMonth[m]||[]).length>1?`<div class="row flat"><div><div class="code"
+      style="font-size:12px">Month</div></div><div class="amt"><b>${m0(prevTotal(byMonth[m]))}</b></div></div>`:''}
+  </div>`).join('')}
+
+  <div class="card">
+    <div class="btnrow">
+      <button class="btn primary" data-prevsave="1">Save prevision</button>
+      <button class="btn" data-prevcancel="1">Cancel</button>
+    </div>
+    
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- Accounts --*/
+const CATKEYS = ['cash','savings','estate','excluded'];
+/* An account belonging to a child - whoever you have marked as one. */
+const isGirl = (a) => (a.owners||[a.owner]).some(isKid);
+/* Category tints the tile; the girls override it to pink wherever they appear;
+   closed goes grey. Colour is never the only signal - the key, the owner and
+   the position in the list all say the same thing. */
+const tileClass = (a) => a.closed ? 'shut' : isGirl(a) ? 'girl' : (a.category||'cash');
+/* The whole number, never abbreviated. "$255k" reads as an estimate and this
+   is a balance; four across 352px leaves ~82px, so the type shrinks a step for
+   the long ones rather than the number losing its digits. */
+const tileAmt = (v,s) => m0(v,s);
+
+const tile = (a) => { const v=tileAmt(a.native, symOf(a.currency)); return `
+  <div class="tile ${tileClass(a)}" data-acct="${esc(a.code)}">
+    <div class="k">${esc(a.key||a.code)}</div>
+    <div class="v${v.length>9?' long':''}">${v}</div>
+    ${a.currency!==state.cur
+      ? `<div class="s alt2">(${tileAmt(a.shown, sym())})</div>`
+      : `<div class="s">${esc(a.bank || a.subtype || '')}</div>`}
+  </div>`; };
+
+/* Euro first, then dollars, then anything else, with the currency named
+   between the blocks. Mixing them makes every tile need a second glance. */
+const CURORDER = ['EUR','USD','AUD'];
+function currencyBlocks(list){
+  const seen = [...new Set(list.map((a)=>a.currency))]
+    .sort((x,y)=>(CURORDER.indexOf(x)+9)%99 - (CURORDER.indexOf(y)+9)%99);
+  return seen.map((c)=>{
+    const mine = list.filter((a)=>a.currency===c);
+    return `<div class="sep">${c==='EUR'?'Euro':c==='USD'?'Dollar':esc(c)}
+      <span>${m0(mine.reduce((s,a)=>s+a.shown,0))}</span></div>${mine.map(tile).join('')}`;
+  }).join('');
+}
+
+function tabAccounts(){
+  if (state.checks) return checksPage();
+  if (state.entry) return entryForm();
+  if (state.account === '__new') return accountForm(null);
+  if (state.account) return accountDetail(state.account);
+  const Y = state.year;
+  /* The selected year, not today: which accounts existed then, and what they
+     held at its end. Looking at 2016 and seeing today's accounts would be a
+     different question entirely. */
+  const list = C.latest({ ...opts(), includeClosed:true, asOf:`${Y}-12` });
+  const openThen = (a) => a.years.includes(Y) || a.created;
+  const open = list.filter(openThen);
+  const shut = list.filter((a)=>!openThen(a)).sort((x,y)=>Math.abs(y.shown)-Math.abs(x.shown));
+
+  const group = (key) => {
+    const mine = open.filter((a)=>a.category===key)
+      .sort((x,y)=>Math.abs(y.shown)-Math.abs(x.shown));
+    if (!mine.length) return '';
+    const cat = REG.CATEGORY[key];
+    return `<div class="card">
+      <h2>${esc(cat.label)}
+        <span class="muted" style="text-transform:none;letter-spacing:0">${
+          m0(mine.reduce((s,a)=>s+a.shown,0))}</span></h2>
+      <div class="tiles">${currencyBlocks(mine)}</div>
+    </div>`;
+  };
+
+  const warn = live();
+  const high = warn.filter((f)=>f.severity==='high').length;
+
+  return `
+  ${warn.length?`<div class="card">
+    <h2>To check <span class="muted" style="text-transform:none;letter-spacing:0">${
+      high?high+' serious':warn.length}</span>
+      <button class="gbtn ${high?'':'ghost'}" data-checks="1">Review</button></h2>
+  </div>`:''}
+
+  ${CATKEYS.map(group).join('')}
+
+  <div class="card">
+    <h2>Add</h2>
+    <button class="btn primary" data-new="1">New account</button>
+    <div class="splitkeys" style="margin-top:12px">
+      ${['cash','savings','estate'].map((k)=>`<span class="splitkey"><span class="sw tile ${k}"
+        style="width:10px;height:10px;padding:0;border-radius:3px;border-top-width:2px"></span>${
+        esc(REG.CATEGORY[k].label)}</span>`).join('')}
+      <span class="splitkey"><span class="sw tile girl"
+        style="width:10px;height:10px;padding:0;border-radius:3px;border-top-width:2px"></span>The girls</span>
+    </div>
+    
+  </div>
+
+  ${shut.length?`<div class="card">
+    <h2>Not open in ${Y}
+      <span class="muted" style="text-transform:none;letter-spacing:0">${shut.length}</span></h2>
+    <div class="tiles">${shut.map(tile).join('')}</div>
+    
+  </div>`:''}`;
+}
+
+/* ------------------------------------------------------- the account editor --
+
+   Edits land in localStorage on top of accounts.js, never in data.js. `code`
+   is the spreadsheet tab and is the permanent link to ten years of rows, so it
+   is shown but not editable; `key` is what you see everywhere else and can be
+   whatever you like.                                                          */
+
+function formFrom(a){
+  return { code:a?a.code:'', key:a?(a.key||a.code):'', bank:a?(a.bank||''):'',
+    type:a?a.type:'ledger', subtype:a?(a.subtype||''):'', category:a?a.category:'cash',
+    currency:a?a.currency:'USD', owners:a?[...(a.owners||[a.owner])]:Object.keys(OWNERS()).slice(0,1),
+    closed:a?!!a.closed:false };
+}
+
+function editorFields(f, isNew){
+  const owners = Object.entries(OWNERS());
+  return `
+  <div class="field"><label>Bank</label>
+    <input id="fBank" value="${esc(f.bank)}" placeholder="who holds it"></div>
+  <div class="field"><label>Key — what you see everywhere</label>
+    <input id="fKey" value="${esc(f.key)}" placeholder="short name"></div>
+  ${isNew?`<div class="field"><label>Sheet code — permanent, links to the rows</label>
+    <input id="fCode" value="${esc(f.code)}" placeholder="e.g. BNPJE"></div>`
+  :`<div class="field"><label>Sheet code</label>
+    <input value="${esc(f.code)}" disabled title="the spreadsheet tab name — renaming it would orphan ten years of rows"></div>`}
+  <div class="field"><label>Owners — pick as many as apply</label>
+    ${!owners.length?'<div class="hint" style="margin-top:0;margin-bottom:6px">No people yet — gear › People</div>':''}
+    <div class="chips">${owners.map(([o,n])=>
+      `<button class="chip ${isKid(o)?'pink':''} ${f.owners.includes(o)?'on':''}"
+        data-owner="${o}">${esc(n)}</button>`).join('')}</div></div>
+  <div class="field"><label>Category — is the money reachable</label>
+    <div class="chips">${CATKEYS.map((c)=>
+      `<button class="chip ${f.category===c?'on':''}" data-cat="${c}">${esc(REG.CATEGORY[c].label)}</button>`).join('')}</div></div>
+  ${isNew?`
+  <div class="field"><label>Kind of record</label>
+    <div class="chips">${Object.entries(REG.TYPE_LABEL).map(([t,l])=>
+      `<button class="chip ${f.type===t?'on':''}" data-type="${t}">${esc(l)}</button>`).join('')}</div></div>
+  <div class="field"><label>Currency</label>
+    <div class="chips">${['USD','EUR','AUD'].map((c)=>
+      `<button class="chip ${f.currency===c?'on':''}" data-ccy="${c}">${c}</button>`).join('')}</div></div>`:''}
+  <div class="field"><label>Subtype</label>
+    <input id="fSub" value="${esc(f.subtype)}" placeholder="checking, savings, ira…"></div>`;
+}
+
+function accountForm(code){
+  const f = state.form || (state.form = formFrom(code ? C.acct(code) : null));
+  return `
+  <div class="card">
+    <h2><span class="act" data-back="1">‹ ${code?esc(f.key):'Accounts'}</span>
+      ${code?'Edit':'New account'}</h2>
+    ${editorFields(f, !code)}
+    <div class="btnrow" style="margin-top:14px">
+      <button class="btn primary" data-save="${esc(code||'')}">${code?'Save':'Create'}</button>
+      <button class="btn" data-back="1">Cancel</button>
+    </div>
+    ${code&&overridden(code)?`<button class="btn danger" style="margin-top:7px"
+      data-reset="${esc(code)}">Reset to accounts.js</button>`:''}
+    
+  </div>
+  ${code?(function(){
+    const lat=C.latest({...opts(), includeClosed:true}).find((x)=>x.code===code);
+    const shut=lat?lat.closed:!!f.closed;
+    return `<div class="card">
+      <h2>${shut?'Reopen':'Close'}</h2>
+      <button class="btn ${shut?'':'danger'}" data-close="${esc(code)}">${
+        shut?'Reopen '+esc(f.key):'Mark '+esc(f.key)+' as closed'}</button>
+      
+    </div>`; })():''}`;
+}
+
+/* ------------------------------------------------- filtering the operations --
+
+   Four ways in, because four different questions get asked of a statement:
+   what did I spend at X, what was that 450 euro thing, what did we spend on
+   Food, and what happened in July.                                          */
+function filterOps(ops){
+  const f = state.opFilter;
+  const min = parseFloat(f.min), max = parseFloat(f.max);
+  const q = (f.q||'').trim().toLowerCase();
+  return ops.filter((r)=>{
+    if (q && !(String(r.party||'').toLowerCase().includes(q)
+            || String(r.note||'').toLowerCase().includes(q)
+            || String(r.group||'').toLowerCase().includes(q))) return false;
+    if (f.tag && C.parentOf(r.group)!==f.tag && r.group!==f.tag) return false;
+    if (f.subtag && r.group!==f.subtag) return false;
+    if (f.oneoff && !r.oneoff) return false;
+    if (f.dir==='in' && r.amount <= 0) return false;
+    if (f.dir==='out' && r.amount >= 0) return false;
+    if (f.from && r.date < f.from) return false;
+    if (f.to && r.date > f.to) return false;
+    /* An amount search should find 450 out and 450 in - the sign is a
+       different question from the size. */
+    if (!isNaN(min) && Math.abs(r.amount) < min) return false;
+    if (!isNaN(max) && Math.abs(r.amount) > max) return false;
+    return true;
+  }).sort(sortOps);
+}
+
+/* Sorting is part of the filter, not a separate control: you are narrowing a
+   list and then deciding how to read it. */
+function sortOps(a,b){
+  const f = state.opFilter, dir = f.desc===false ? -1 : 1;
+  let v;
+  if (f.sort==='amount') v = Math.abs(a.amount) - Math.abs(b.amount);
+  else if (f.sort==='name') v = String(a.party||'').localeCompare(String(b.party||''));
+  else v = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+  return v * -dir;
+}
+const SORTS = [['date','Date'],['amount','Amount'],['name','Name']];
+const FILTER_KEYS = ['q','tag','subtag','from','to','min','max','oneoff','dir'];
+const filterOn = () => FILTER_KEYS.some((k)=>state.opFilter[k]);
+const blankFilter = () => ({ q:'', tag:'', subtag:'', from:'', to:'', min:'', max:'',
+  oneoff:false, dir:'', sort:'date', desc:true });
+
+/* The filter, built the way Bench builds one: a field showing the active
+   filters as chips, a magnifier beside it, and an absolutely-positioned menu
+   that drops from the button rather than pushing the page down. Opening a
+   filter must not move the list you are looking at. */
+function opFilterCard(ops, shown){
+  const tax = taxonomy();
+  const f = state.opFilter;
+  const menu = state.fmenu;                      // null | 'root' | a field key
+  const used = [...new Set(ops.map((r)=>C.parentOf(r.group)))]
+    .map((id)=>tax.byId[id]).filter(Boolean)
+    .sort((a,b)=>a.label.localeCompare(b.label));
+  const subs = [...new Set(ops.map((r)=>r.group))].sort();
+
+  const chip = (k,label) => `<span class="fchip">${esc(label)}<b data-unfilter="${k}">✕</b></span>`;
+  const chips = [];
+  if (f.q) chips.push(chip('q', f.q));
+  if (f.min) chips.push(chip('min','min '+symOf(state.cur)+f.min));
+  if (f.max) chips.push(chip('max','max '+symOf(state.cur)+f.max));
+  if (f.from) chips.push(chip('from','from '+f.from));
+  if (f.to) chips.push(chip('to','to '+f.to));
+  if (f.tag) chips.push(chip('tag',(tax.byId[f.tag]||{}).label||f.tag));
+  if (f.subtag) chips.push(chip('subtag',f.subtag));
+  if (f.oneoff) chips.push(chip('oneoff','one off'));
+  if (f.dir) chips.push(chip('dir', f.dir==='in'?'credits':'debits'));
+
+  const item = (k,label,val) => `<button class="fitem" data-fmenu="${k}">${esc(label)}${
+    val?`<span>${esc(val)}</span>`:''}</button>`;
+
+  let body = '';
+  if (menu === 'root') {
+    body = `
+      ${filterOn()?`<button class="fitem danger" data-clearfilter="1">Clear filters</button>
+        <div class="fsep"></div>`:''}
+      ${item('q','Name', f.q)}
+      ${item('amount','Amount', f.min||f.max ? (f.min||'…')+'–'+(f.max||'…') : '')}
+      ${item('date','Dates', f.from||f.to ? (f.from||'…')+' → '+(f.to||'…') : '')}
+      ${item('cat','Category', f.tag ? ((tax.byId[f.tag]||{}).label||f.tag) : '')}
+      ${item('subtag','Tag', f.subtag)}
+      ${item('oneoff','One off', f.oneoff?'only':'')}
+      ${item('dir','In or out', f.dir==='in'?'credits':f.dir==='out'?'debits':'')}
+      <div class="fsep"></div>
+      ${item('sort','Sort by', (SORTS.find(([k])=>k===f.sort)||[,'Date'])[1]
+        + (f.desc===false?' ↑':' ↓'))}`;
+  } else if (menu === 'q') {
+    body = `<div class="fback" data-fmenu="root">‹ Name</div>
+      <input class="fsearch" id="fQ" value="${esc(f.q)}" placeholder="payee or note" autofocus>
+      <button class="fitem" data-fapply="q">Apply</button>`;
+  } else if (menu === 'amount') {
+    body = `<div class="fback" data-fmenu="root">‹ Amount</div>
+      <div class="frow"><input id="fMin" value="${esc(f.min)}" placeholder="min" inputmode="decimal">
+      <input id="fMax" value="${esc(f.max)}" placeholder="max" inputmode="decimal"></div>
+      <button class="fitem" data-fapply="amount">Apply</button>`;
+  } else if (menu === 'date') {
+    body = `<div class="fback" data-fmenu="root">‹ Dates</div>
+      <input class="fsearch" id="fFrom" type="date" value="${esc(f.from)}">
+      <input class="fsearch" id="fTo" type="date" value="${esc(f.to)}">
+      <button class="fitem" data-fapply="date">Apply</button>`;
+  } else if (menu === 'cat') {
+    body = `<div class="fback" data-fmenu="root">‹ Category</div>
+      <div class="fopts">${used.map((p)=>
+        `<button class="fitem ${f.tag===p.id?'on':''}" data-optag="${esc(p.id)}">${esc(p.label)}</button>`).join('')
+        || '<div class="fempty">None here.</div>'}</div>`;
+  } else if (menu === 'subtag') {
+    body = `<div class="fback" data-fmenu="root">‹ Tag</div>
+      <div class="fopts">${subs.map((t)=>
+        `<button class="fitem ${f.subtag===t?'on':''}" data-opsub="${esc(t)}">${esc(t)}</button>`).join('')
+        || '<div class="fempty">None here.</div>'}</div>`;
+  } else if (menu === 'dir') {
+    body = `<div class="fback" data-fmenu="root">‹ In or out</div>
+      <button class="fitem ${f.dir===''?'on':''}" data-fdir="">Both</button>
+      <button class="fitem ${f.dir==='in'?'on':''}" data-fdir="in">Credits only</button>
+      <button class="fitem ${f.dir==='out'?'on':''}" data-fdir="out">Debits only</button>`;
+  } else if (menu === 'sort') {
+    body = `<div class="fback" data-fmenu="root">‹ Sort by</div>
+      ${SORTS.map(([k,l])=>
+        `<button class="fitem ${f.sort===k?'on':''}" data-fsort="${k}">${l}</button>`).join('')}
+      <div class="fsep"></div>
+      <button class="fitem ${f.desc!==false?'on':''}" data-fdesc="1">Descending ↓</button>
+      <button class="fitem ${f.desc===false?'on':''}" data-fdesc="0">Ascending ↑</button>`;
+  } else if (menu === 'oneoff') {
+    body = `<div class="fback" data-fmenu="root">‹ One off</div>
+      <button class="fitem ${f.oneoff?'on':''}" data-foneoff="1">Only one-off entries</button>
+      <button class="fitem ${!f.oneoff?'on':''}" data-foneoff="0">All entries</button>`;
+  }
+
+  return `<div class="card searchcard">
+    <div class="searchrow">
+      <div class="fbox">${chips.length?chips.join(''):`<span class="fph">All ${ops.length} entries</span>`}</div>
+      <div class="fdrop">
+        <button class="iconbtn ${menu?'on':''}" data-togglefilter="1" title="Filter">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        </button>
+        ${menu?`<div class="fmenu show">${body}</div>`:''}
+      </div>
+    </div>
+    ${filterOn()?`<div class="hint">${shown} of ${ops.length}.</div>`:''}
+  </div>`;
+}
+
+
+/* ------------------------------------------------------- splitting an entry --
+
+   One purchase, several tags. A supermarket run that was half food and half
+   clothes is one line on the statement and two facts about the year. The
+   split is stored per row id; the original amount is never changed, and the
+   parts must add up to it or it is not a split, it is an error.             */
+function splitCard(r, s){
+  /* A working copy. Editing store.splits directly would save half-finished
+     parts that do not add up, which is worse than no split at all. */
+  if (!state.draftSplit) state.draftSplit =
+    (store.splits[r.src] || [{ group:r.group, amount:r.amount }]).map((p)=>({...p}));
+  const cur = state.draftSplit;
+  const tax = taxonomy();
+  const sum = cur.reduce((t,p)=>t+(+p.amount||0),0);
+  const left = cents(r.amount - sum);
+  return `<div class="card">
+    <h2><span class="act" data-splitclose="1">‹ Back</span> Split this entry</h2>
+    <div class="hero" style="font-size:24px">${m2(r.amount, s)}</div>
+    <div class="heroSub">${esc(r.party||'—')} · ${esc(r.date)}</div>
+    <div class="rows" style="margin-top:14px">${cur.map((p,i)=>`
+      <div class="row flat">
+        <div style="flex:1;min-width:0">
+          <select data-splitgrp="${i}" style="width:100%">${
+            Object.keys(tax.OF).sort().map((g)=>
+              `<option ${g===p.group?'selected':''}>${esc(g)}</option>`).join('')}</select>
+        </div>
+        <div style="width:96px"><input data-splitamt="${i}" value="${p.amount}"
+          inputmode="decimal" style="width:100%;text-align:right"></div>
+        ${cur.length>1?`<span class="act" data-splitdel="${i}">✕</span>`:''}
+      </div>`).join('')}</div>
+    <div class="row flat" style="margin-top:6px">
+      <div><div class="code" style="font-size:12px">Still to allocate</div></div>
+      <div class="amt"><b style="color:${Math.abs(left)<0.005?'var(--good)':'var(--warn)'}">${m2(left,s)}</b></div>
+    </div>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn" data-splitadd="1">Add a part</button>
+      <button class="btn primary" data-splitsave="${esc(r.src)}"
+        ${Math.abs(left)>=0.005?'disabled':''}>Save</button>
+    </div>
+    ${store.splits[r.src]?`<button class="btn danger" style="margin-top:7px"
+      data-splitundo="${esc(r.src)}">Remove the split</button>`:''}
+    
+  </div>`;
+}
+const cents = (v) => Math.round(v*100)/100;
+
+/* ------------------------------------------ an investment account's history --
+
+   You asked for shares, price and balance month by month. The books do not
+   record a unit count or a unit price - not in any fund or portfolio tab, in
+   any year. What they do record is
+   Contributions, Interest and Solde: what you paid in, what the market did,
+   and where it left you. That answers the same question with the columns that
+   exist, and adding shares would mean adding a column to the spreadsheet.  */
+function positionCard(a){
+  const hist = C.positionHistory(a.code);
+  if (!hist.length) return '';
+  const s = symOf(a.currency);
+  const Y = state.posYear && hist.some((p)=>p.month.startsWith(String(state.posYear)))
+    ? state.posYear : +hist[hist.length-1].month.slice(0,4);
+  /* Not past today. The sheet fills the rest of the current year with the
+     latest figure so its own formulas resolve, which showed as seven flat
+     months of "+$0" that had not happened yet. */
+  const mine = hist.filter((p)=>p.month.startsWith(String(Y)) && p.month<=NOW);
+  const yrs = [...new Set(hist.map((p)=>+p.month.slice(0,4)))].sort();
+  const first = mine[0], last = mine[mine.length-1];
+  const paidIn = first && last && first.contributions!==null && last.contributions!==null
+    ? last.contributions - first.contributions : null;
+  const grew = first && last ? last.balance - first.balance : 0;
+
+  return `
+  <div class="card">
+    <h2>Month by month
+      <span class="muted" style="text-transform:none;letter-spacing:0">${esc(a.balanceColumn||'balance')}</span></h2>
+    <div class="pillrow">${yrs.map((y)=>
+      `<button class="pill ${y===Y?'on':''}" data-posyear="${y}">${y}</button>`).join('')}</div>
+    <div class="scroll"><table>
+      <thead><tr><th>Month</th><th>Paid in</th><th>Growth</th><th>Balance</th><th>Change</th></tr></thead>
+      <tbody>${mine.map((p)=>`<tr>
+        <td>${mLabel(p.month)}</td>
+        <td>${p.contributions!==null?m0(p.contributions,s):'—'}</td>
+        <td>${p.interest!==null?m0(p.interest,s):'—'}</td>
+        <td><b>${m0(p.balance,s)}</b></td>
+        <td style="color:${p.delta===null?'var(--muted)':p.delta>=0?'var(--good)':'var(--bad)'}">${
+          p.delta===null?'—':(p.delta>0?'+':'')+m0(p.delta,s)}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="kpis" style="margin-top:12px">
+      <div class="kpi"><div class="l">Put in during ${Y}</div>
+        <div class="v" style="font-size:15px">${paidIn===null?'—':m0(paidIn,s)}</div>
+        <div class="n">contributions</div></div>
+      <div class="kpi"><div class="l">Balance moved</div>
+        <div class="v" style="font-size:15px;color:${grew>=0?'var(--good)':'var(--bad)'}">${
+          grew>=0?'+':''}${m0(grew,s)}</div>
+        <div class="n">over ${mine.length} month${mine.length>1?'s':''}</div></div>
+    </div>
+    
+  </div>`;
+}
+
+function accountDetail(code){
+  const a = C.acct(code);
+  if (!a) { state.account=null; return tabAccounts(); }
+  if (state.editing) return accountForm(code);
+  /* The year in the top bar, not everything ever. Opening an account in 2019 and
+     being handed 1,729 rows from thirteen years is not "the operations of
+     that year". */
+  const allOps = C.operations(code, 20000).filter((r)=>r.docYear===state.year);
+  if (state.opSplit) {
+    const r = allOps.find((x)=>x.src===state.opSplit);
+    if (r) return splitCard(r, symOf(a.currency));
+    state.opSplit = null;
+  }
+  const ops = filterOps(allOps);
+  const lat = C.latest({...opts(), includeClosed:true}).find((x)=>x.code===code);
+  const s = symOf(a.currency);
+  const closed = lat ? lat.closed : !!a.closed;
+  const lastOp = allOps[0];
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-back="1">‹ Accounts</span>
+      <button class="gbtn ghost" data-edit="${esc(code)}">Edit</button></h2>
+    <div class="hero" style="margin-top:2px">${m0(lat?lat.native:0, s)}</div>
+    ${a.currency!==state.cur?`<div class="heroSub" style="font-size:15px;color:var(--txt)">(${
+      m0(lat?lat.shown:0)})</div>`:''}
+    <div class="heroSub"><b style="color:var(--txt)">${esc(a.key||code)}</b>${
+      a.bank?' · '+esc(a.bank):''} · ${esc(a.ownerName)}${
+      closed?' · <b style="color:var(--warn)">closed</b>':''}</div>
+    <div class="heroSub">${lastOp ? `last entry ${esc(lastOp.date)} · ` : ''}${
+      lat&&lat.asOf?`as of ${esc(lat.asOf)}`:''}${
+      !lastOp&&C.positionHistory(code).length?' · month-end balances, no individual entries':''}</div>
+    ${a.code!==(a.key||a.code)?`<div class="hint">Sheet tab <code>${esc(a.code)}</code>.</div>`:''}
+  </div>
+
+  ${positionCard(a)}
+
+  ${/* The way IN has to be here whether or not anything is in yet. It used to
+        live only on the has-operations branch, so a brand-new account showed
+        "nothing recorded" and offered no way to record anything — the one
+        screen where the button matters most was the one screen without it.
+
+        A fund or a property records month-end balances rather than entries, so
+        those get no add button; there is nothing to type. */
+    a.type !== 'ledger' && C.positionHistory(code).length ? '' : `
+    ${allOps.length ? opFilterCard(allOps, ops.length) : ''}
+    <div class="card">
+      <h2>Operations
+        <span><button class="gbtn ghost" data-addto="${esc(code)}">import</button>
+        <button class="gbtn" data-addentry="${esc(code)}">+</button></span></h2>
+      ${!allOps.length ? `<div class="hint" style="margin-top:0">Nothing in ${state.year} yet.</div>` : ''}
+
+      <div class="rows">${ops.slice(0,120).map((r)=>{
+        const sp = store.splits[r.src];
+        return `<div class="row flat" data-editentry="${esc(r.src)}">
+          <div><div class="code" style="font-size:12.5px;font-weight:600">${esc((r.party||'—').slice(0,28))}</div>
+            <div class="sub">${r.date} · ${sp
+              ? sp.map((p)=>esc(p.group)).join(' + ')+' <b>split</b>'
+              : esc(r.group)}${r.note?' · '+esc(r.note.slice(0,16)):''}</div></div>
+          <div class="amt"><b style="color:${r.amount<0?'var(--bad)':'var(--good)'}">${m2(r.amount,s)}</b>
+            ${r.solde!==null?`<span class="alt">${m0(r.solde,s)}</span>`:''}</div>
+        </div>`;}).join('')}</div>
+      ${ops.length>120?`<div class="hint">Newest 120 of ${ops.length}.</div>`:''}
+      ${!ops.length?`<div class="hint">Nothing matches that filter.</div>`:''}
+    </div>`}`;
+}
+
+/* ----------------------------------------------------------------- History --*/
+const SERIES = [['total','Net worth'],['cash','Cash'],['savings','Savings'],['estate','Property']];
+/* Three frames. Money coming in is good when it goes up; money going out is
+   good when it goes down - so the colour of a change flips between them, and
+   the frames are what make that legible rather than confusing. */
+const CMP_FRAMES = [
+  { key:'inc', label:'Income, tax and savings', keys:['income','tax','savings'], flip:true },
+  { key:'ess', label:'Essential', keys:['essential'], flip:false },
+  { key:'opt', label:'Optional',  keys:['optional','other'], flip:false },
+];
+
+/* Split out so a slider drag can redraw JUST these, in place. Re-rendering the
+   whole tab on every input event replaced the range input under your thumb,
+   which on a touch screen cancels the drag - the slider "got stuck" after a
+   few pixels. Nothing about the fix is cosmetic. */
+function histPlot(pts, color){
+  return line({ points:pts, height:148, color });
+}
+function histKpis(pts){
+  const a0 = pts[0]||{v:0,m:'—'}, a1 = pts[pts.length-1]||{v:0,m:'—'};
+  const grew = a1.v - a0.v;
+  return `<div class="kpis" style="margin-top:12px">
+    <div class="kpi"><div class="l">Start</div><div class="v" style="font-size:16px">${m0(a0.v)}</div>
+      <div class="n">${esc(a0.m)}</div></div>
+    <div class="kpi"><div class="l">End</div><div class="v" style="font-size:16px">${m0(a1.v)}</div>
+      <div class="n">${esc(a1.m)}</div></div>
+    <div class="kpi"><div class="l">Change</div>
+      <div class="v" style="font-size:16px;color:${grew>=0?'var(--good)':'var(--bad)'}">${
+        grew>=0?'+':''}${m0(grew)}</div>
+      <div class="n">${a0.v?((grew/Math.abs(a0.v)*100).toFixed(0)+'%'):''}</div></div>
+  </div>`;
+}
+/* The window, as indices, resolved the same way the screen does. */
+function histWindow(){
+  const w = C.wealth(opts());
+  const n = w.length;
+  let lo = state.histLo===null||state.histLo===undefined ? 0 : state.histLo;
+  let hi = state.histHi===null||state.histHi===undefined ? n-1 : state.histHi;
+  lo = Math.max(0, Math.min(lo, Math.max(0,n-2)));
+  hi = Math.max(lo+1, Math.min(hi, n-1));
+  const ser = SERIES.some(([k])=>k===state.series) ? state.series : 'total';
+  return { w, n, lo, hi, ser,
+    pts: w.slice(lo, hi+1).map((p)=>({ m:p.month, v:p[ser] })),
+    color: ser==='total' ? '--c1' : REG.CATEGORY[ser].color };
+}
+/* Redraw the plot and the boxes without touching the slider elements. */
+function histLive(){
+  const h = histWindow();
+  const plot = document.getElementById('histPlot');
+  const kpis = document.getElementById('histKpis');
+  if (plot) plot.innerHTML = histPlot(h.pts, h.color);
+  if (kpis) kpis.innerHTML = histKpis(h.pts);
+  const lab = document.querySelector('.rngv');
+  if (lab && h.pts.length) {
+    lab.innerHTML = '<span>'+esc(h.pts[0].m)+'</span><span>'+esc(h.pts[h.pts.length-1].m)+'</span>';
+  }
+}
+
+function tabHistory(){
+  const o=opts();
+  const w = C.wealth(o);
+  /* One line at a time, not four. Cash sits an order of magnitude below the
+     total, so on a shared axis it is a flat line at the bottom saying
+     nothing - and a second y-axis is the one chart rule never to break. */
+  const ser = SERIES.some(([k])=>k===state.series) ? state.series : 'total';
+  const serColor = ser==='total' ? '--c1' : REG.CATEGORY[ser].color;
+
+  /* The window, as indices into the month list. Two sliders rather than one:
+     a single "last N years" control cannot show you 2016 to 2019. */
+  const n = w.length;
+  let lo = state.histLo===null||state.histLo===undefined ? 0 : state.histLo;
+  let hi = state.histHi===null||state.histHi===undefined ? n-1 : state.histHi;
+  lo = Math.max(0, Math.min(lo, n-2)); hi = Math.max(lo+1, Math.min(hi, n-1));
+  const win = w.slice(lo, hi+1);
+  const pts = win.map((p)=>({ m:p.month, v:p[ser] }));
+  const a0 = pts[0]||{v:0,m:'—'}, a1 = pts[pts.length-1]||{v:0,m:'—'};
+  const grew = a1.v - a0.v;
+
+  /* Compare the year chosen in the top bar against one picked here. */
+  const yrs = C.years(o);
+  const b = String(state.year);
+  const a = state.cmpA && yrs.includes(String(state.cmpA)) ? String(state.cmpA)
+    : (yrs.filter((y)=>y!==b)[0] || b);
+  /* Everything, not just spending: income and tax belong in the comparison
+     too, and a year where income fell is the thing you most want to see. */
+  const catOf={};
+  for (const r of C.rows(o)){
+    if (r.type==='transfer') continue;
+    if (o.livingOnly && r.oneoff) continue;
+    const y=r.month.slice(0,4); if (y!==a && y!==b) continue;
+    const p=C.parentOf(r.group);
+    (catOf[p] || (catOf[p]={}))[y] = (catOf[p][y]||0) + C.conv(r.amount,r.currency,r.month,state.cur);
+  }
+  const tax = taxonomy();
+  const rankedCmp = tax.PARENTS.filter((p)=>catOf[p.id])
+    .map((p)=>({ g:p.label, cls:p.cls||'other',
+      a:Math.abs(catOf[p.id][a]||0), b:Math.abs(catOf[p.id][b]||0) }))
+    .filter((r)=>r.a||r.b);
+  const yearEnds = C.byYearEnd(o);
+
+  return `
+  <div class="card">
+    <h2>Over time
+      <select id="selSeries" class="inlinesel">${SERIES.map(([k,label])=>
+        `<option value="${k}" ${k===ser?'selected':''}>${esc(label)}</option>`).join('')}</select></h2>
+    <div id="histPlot">${histPlot(pts, serColor)}</div>
+    <div class="rng">
+      <input type="range" id="rLo" min="0" max="${n-2}" value="${lo}">
+      <input type="range" id="rHi" min="1" max="${n-1}" value="${hi}">
+      <div class="rngv"><span>${esc(a0.m)}</span><span>${esc(a1.m)}</span></div>
+    </div>
+    <div id="histKpis">${histKpis(pts)}</div>
+    ${lo>0||hi<n-1?`<div class="hint"><span class="act" data-rngall="1">Whole range</span></div>`:''}
+  </div>
+
+  <div class="card">
+    <h2>Year ends</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Year</th><th>Cash</th><th>Savings</th><th>Property</th><th>Total</th></tr></thead>
+      <tbody>${yearEnds.slice().reverse().map((p)=>`<tr${p.year===b?' style="background:rgba(59,130,246,.10)"':''}>
+        <td>${p.year}</td><td>${tnum(p.cash)}</td>
+        <td>${tnum(p.savings)}</td><td>${tnum(p.estate)}</td><td><b>${tnum(p.total)}</b></td></tr>`).join('')}</tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>${b} against
+      <select id="cmpA" class="inlinesel">${yrs.filter((y)=>y!==b).map((y)=>
+        `<option ${y===a?'selected':''}>${y}</option>`).join('')}</select></h2>
+        ${rankedCmp.length ? CMP_FRAMES.map((fr)=>{
+      const mine = rankedCmp.filter((r)=>fr.keys.includes(r.cls));
+      if (!mine.length) return '';
+      const ta = mine.reduce((s2,r)=>s2+r.a,0), tb = mine.reduce((s2,r)=>s2+r.b,0);
+      const td = tb-ta;
+      return `<div class="frame ${fr.key}">
+        <div class="frametop">${esc(fr.label)}
+          <span style="color:${fr.flip?(td>0?'var(--good)':'var(--bad)'):(td>0?'var(--bad)':'var(--good)')}">${
+            td>0?'+':''}${tnum(td)}</span></div>
+        <div class="scroll"><table>
+          <thead><tr><th>Category</th><th>${a}</th><th>${b}</th><th>Change</th></tr></thead>
+          <tbody>${mine.map((r)=>{
+            const d = r.b-r.a, pc = r.a ? (d/r.a*100) : null;
+            const good = fr.flip ? d>0 : d<0;
+            return `<tr><td>${esc(r.g)}</td><td>${r.a?tnum(r.a):'—'}</td><td>${r.b?tnum(r.b):'—'}</td>
+              <td style="color:${good?'var(--good)':'var(--bad)'}">${d>0?'+':''}${tnum(d)}${
+                pc!==null&&r.a>50?` <span class="muted">${d>0?'+':''}${pc.toFixed(0)}%</span>`:''}</td></tr>`;
+          }).join('')}
+          <tr><td><b>Total</b></td><td><b>${tnum(ta)}</b></td><td><b>${tnum(tb)}</b></td>
+            <td style="color:${fr.flip?(td>0?'var(--good)':'var(--bad)'):(td>0?'var(--bad)':'var(--good)')}">
+            <b>${td>0?'+':''}${tnum(td)}</b></td></tr></tbody></table></div>
+      </div>`;}).join('')
+      : `<div class="hint">No overlap between those two years.</div>`}
+  </div>`;
+}
+
+/* ------------------------------------------------------------------- Bills --*/
+function tabBills(){
+  const o=opts();
+  const led = C.billsFromLedger(o), grid = C.billsFromGrid(o);
+  const kinds=[...new Set([...Object.keys(led),...Object.keys(grid)])].sort();
+  const sel = state.bill && kinds.includes(state.bill) ? state.bill : kinds[0];
+  const yrs=[...new Set(Object.values(led).flatMap((x)=>Object.keys(x)))].sort();
+  const thisYear = (kx) => ((led[kx]||{})[String(YEAR)]||{total:0}).total;
+  const ranked = kinds.map((kx)=>({ kx, v:thisYear(kx) })).sort((x,y)=>y.v-x.v);
+  const months = Object.keys(((led[sel]||{})[String(YEAR)]||{months:{}}).months).sort();
+  const g = (grid[sel]||{})[String(YEAR)];
+
+  return `
+  <div class="card">
+    <h2>Running costs, ${YEAR}</h2>
+    <div class="hero">${m0(ranked.reduce((s,r)=>s+r.v,0))}</div>
+    <div class="heroSub">phone, power, internet, insurance, mortgage and HOA</div>
+  </div>
+
+  <div class="card">
+    <h2>What each one costs</h2>
+    <div class="rows">${ranked.filter((r)=>r.v).map((r)=>`
+      <div class="row flat" data-bill="${esc(r.kx)}" style="cursor:pointer">
+        <div><div class="code" style="font-size:13px">${esc(r.kx)}</div>
+          <div class="sub">${m0(r.v/Math.max(1,months.length||1))} a month</div></div>
+        <div class="amt"><b>${m0(r.v)}</b></div></div>`).join('')}</div>
+  </div>
+
+  <div class="card">
+    <h2>${esc(sel||'—')} month by month</h2>
+    <div class="pillrow">${kinds.map((kx)=>
+      `<button class="pill ${kx===sel?'on':''}" data-bill="${esc(kx)}">${esc(kx)}</button>`).join('')}</div>
+    ${months.length ? columns({ labels:months.map(mLabel),
+        values:months.map((m)=>((led[sel]||{})[String(YEAR)]||{months:{}}).months[m]||0),
+        color:'--c4', height:132 })
+      : `<div class="hint">Nothing recorded for ${esc(sel||'')} in ${YEAR}.</div>`}
+    ${g ? `` : ''}
+  </div>
+
+  <div class="card">
+    <h2>Per year</h2>
+    <div class="scroll"><table><thead><tr><th>Cost</th>${yrs.map((y)=>`<th>${y}</th>`).join('')}</tr></thead>
+      <tbody>${kinds.map((kx)=>`<tr><td>${esc(kx)}</td>${yrs.map((y)=>
+        `<td>${(led[kx]||{})[y]?m0((led[kx])[y].total):'—'}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/* ------------------------------------------------------------------- Girls --*/
+function tabGirls(){
+  /* Never the owner-excluded view: this tab exists to show their money, so
+     hiding it because you have excluded them from your own total would be
+     perverse. */
+  const o = { ...opts(), excludeOwners:[], asOf:`${state.year}-12`, includeClosed:true };
+  const all = C.latest(o);
+  /* Whoever is marked as a child in Settings > People, not a hard-coded pair
+     of initials. Adding a third child is then a setting, not a code change. */
+  const kids = Object.entries(OWNERS())
+    .filter(([code])=>isKid(code))
+    .map(([code,name])=>({ code, name,
+      accounts: all.filter((a)=>(a.owners||[a.owner]).includes(code)) }));
+  const total = kids.reduce((s,k)=>s+k.accounts.reduce((t,a)=>t+a.shown,0),0);
+
+  return `
+  <div class="card">
+    <h2>Kids <span class="muted" style="text-transform:none;letter-spacing:0">end of ${state.year}</span></h2>
+    <div class="hero">${m0(total)}</div>
+    <div class="heroSub">${kids.reduce((n,k)=>n+k.accounts.length,0)} accounts you manage for
+      ${kids.map((k)=>esc(k.name)).join(' and ')}</div>
+  </div>
+
+  ${kids.map((k)=>{
+    const open = k.accounts.filter((a)=>a.years.includes(state.year) || a.created);
+    const shut = k.accounts.filter((a)=>!open.includes(a));
+    const sum = open.reduce((t,a)=>t+a.shown,0);
+    return `<div class="card">
+      <h2>${esc(k.name)}
+        <button class="gbtn" data-newkid="${k.code}" title="New account">+</button></h2>
+      ${open.length?`
+        <div class="hero" style="font-size:24px">${m0(sum)}</div>
+        <div class="heroSub" style="margin-bottom:12px">${open.length} account${open.length>1?'s':''}
+          open in ${state.year}</div>
+        <div class="rows">${open.map((a)=>`
+          <div class="row" data-acct="${esc(a.code)}">
+            <div><div class="code">${esc(a.key||a.code)}</div>
+              <div class="sub">${esc(a.bank||a.subtype||'')}${
+                a.owners&&a.owners.length>1?' · shared with '+a.owners.filter((x)=>x!==k.code)
+                  .map((x)=>esc(OWNERS()[x]||x)).join(', '):''}</div></div>
+            <div class="amt"><b>${m0(a.native, symOf(a.currency))}</b>
+              ${a.currency!==state.cur?`<span class="alt">${m0(a.shown)}</span>`:''}</div>
+          </div>`).join('')}</div>`
+        : `<div class="hint" style="margin-top:0">No account open in ${state.year}.</div>`}
+      ${shut.length?`<div class="hint">${shut.map((a)=>esc(a.key||a.code)).join(', ')} —
+        not open that year.</div>`:''}
+    </div>`;
+  }).join('')}`;
+}
+/* ------------------------------------------------------------- Check sheet --*/
+const KIND = {
+  'crossed-party':'Crossed counterparties','transfer-unmatched':'Transfer with one side',
+  'transfer-is-spending':'Spending hidden as a transfer','should-be-transfer':'Really a transfer',
+  'inflow-in-expense':'Income in an expense category','inconsistent-tag':'Tagged inconsistently',
+  'possible-duplicate':'Possible double entry','fx-spread':'Conversion worth a look',
+  'alias-needed':'Names to map','date-outside-year':'Date in the wrong year',
+  'format-lie':'Formatting contradicts the currency' };
+
+const live = () => allFindings().filter((f)=>!dismissed().includes(f.id));
+/* ------------------------------------------------------- acting on a check --
+
+   A list of problems you cannot do anything about is just nagging. Each
+   finding opens the entry behind it, so it can be corrected, or marked as
+   right — which is the honest outcome most of the time: a payee genuinely
+   tagged two different ways because it really is two different things.
+
+   Dismissing is per device and reversible. It never touches the entry.      */
+
+const dismissed = () => store.dismissed || (store.dismissed = []);
+const findingId = (f, i) => (f.src || f.kind) + '|' + i;
+
+function checksPage(){
+  if (state.check) return checkOne();
+  const l = live();
+  const byKind={}; for (const f of l) (byKind[f.kind]||(byKind[f.kind]=[])).push(f);
+  const order = Object.entries(byKind).sort((x,y)=>y[1].length-x[1].length);
+  const nDismissed = dismissed().length;
+  return `
+  <div class="card">
+    <h2><span class="act" data-checksback="1">‹ Accounts</span> To check
+      <span class="muted" style="text-transform:none;letter-spacing:0">${l.length}</span></h2>
+    ${nDismissed?`<button class="btn" style="margin-top:10px" data-undismiss="1">
+      Bring back ${nDismissed} marked right</button>`:''}
+  </div>
+  ${order.map(([kx,list])=>`
+    <div class="card"><h2>${esc(KIND[kx]||kx)}
+      <span class="muted" style="text-transform:none;letter-spacing:0">${list.length}</span></h2>
+      <div class="rows">${list.slice(0,25).map((f)=>`
+        <div class="row" data-checkone="${esc(f.id)}">
+          <div style="flex:1;min-width:0">
+            <div class="code" style="font-size:12.5px">${esc(f.title)}</div>
+            <div class="sub">${f.date?esc(f.date):''}${f.account?' · '+esc(f.account):''}</div></div>
+          <div class="amt"><b class="muted">›</b></div>
+        </div>`).join('')}</div>
+      ${list.length>25?`<div class="hint">+ ${list.length-25} more.</div>`:''}
+    </div>`).join('')}
+  ${!l.length?`<div class="card"><div class="hint" style="margin-top:0">Nothing to check.</div></div>`:''}`;
+}
+
+function checkOne(){
+  const f = live().concat(allFindings()).find((x)=>x.id===state.check);
+  if (!f) { state.check=null; return checksPage(); }
+  /* The row this is about, if it is about a row at all. Some findings are
+     about the sheet itself - a Total-tab cell, a whole tab's dates. */
+  const r = D.ledger.find((x)=>x.src===f.src);
+  const a = r ? C.acct(r.account) : null;
+  const s = a ? symOf(a.currency) : sym();
+  const isDismissed = dismissed().includes(f.id);
+  /* Other entries with the same payee, which is what makes an
+     inconsistent-tag finding judgeable rather than just alarming. */
+  const siblings = r ? D.ledger.filter((x)=>x!==r && x.party===r.party
+    && x.account===r.account).slice(0,8) : [];
+
+  return `
+  <div class="card">
+    <h2><span class="act" data-checkback="1">‹ To check</span>
+      ${esc(KIND[f.kind]||f.kind)}</h2>
+    <div class="heroSub" style="margin-top:2px;color:var(--txt);font-size:14px">${esc(f.title)}</div>
+    <div class="hint">${esc(f.detail)}</div>
+  </div>
+
+  ${r?`<div class="card">
+    <h2>The entry <button class="gbtn ghost" data-editentry="${esc(r.src)}">Edit</button></h2>
+    <div class="rows">
+      <div class="row flat"><div><div class="code">${esc(r.party||'—')}</div>
+        <div class="sub">${esc(r.date)} · ${esc(r.account)}</div></div>
+        <div class="amt"><b style="color:${r.amount<0?'var(--bad)':'var(--good)'}">${
+          m2(r.amount,s)}</b></div></div>
+      <div class="row flat"><div><div class="code">Tag</div></div>
+        <div class="amt"><b>${esc(r.group)}</b></div></div>
+      ${r.note?`<div class="row flat"><div><div class="code">Note</div></div>
+        <div class="amt"><b>${esc(r.note)}</b></div></div>`:''}
+    </div>
+  </div>
+
+  ${siblings.length?`<div class="card">
+    <h2>Same payee, same account
+      <span class="muted" style="text-transform:none;letter-spacing:0">${siblings.length}</span></h2>
+    <div class="rows">${siblings.map((x)=>`
+      <div class="row flat" data-editentry="${esc(x.src)}">
+        <div><div class="code" style="font-size:12.5px">${esc(x.date)}</div>
+          <div class="sub">${esc(x.group)}</div></div>
+        <div class="amt"><b>${m2(x.amount,s)}</b></div></div>`).join('')}</div>
+  </div>`:''}`
+  :`<div class="card">
+    <h2>Where</h2>
+    <div class="hint" style="margin-top:0">${esc(f.src||'—')}${
+      f.account?' · '+esc(f.account):''}. This one is about the spreadsheet
+      rather than a single entry, so there is nothing here to edit.</div>
+  </div>`}
+
+  <div class="card">
+    ${isDismissed
+      ? `<button class="btn" data-uncheck="${esc(f.id)}">Put it back on the list</button>`
+      : `<button class="btn primary" data-okcheck="${esc(f.id)}">This is correct</button>`}
+  </div>`;
+}
+
+/* Dismissed findings still need to be findable, to be undone. */
+const allFindings = () => D.findings.map((f,i)=>({ ...f, id: findingId(f,i) }));
+
+/* ---------------------------------------------------------------- Settings --
+
+   A tab like any other, reached from the gear. It used to slide up from the
+   bottom over the whole screen with its own close button, which made it feel
+   like a different application.                                             */
+
+/* ------------------------------------------------------------- an entry ----
+
+   The account decides the currency, so it is not asked for twice, and the
+   sign is a pair of buttons rather than a minus you have to remember -
+   forgetting it files an expense as income.                                 */
+
+function entryForm(){
+  const e = state.entry;
+  const tax = taxonomy();
+  const accts = D.accounts.filter((a)=>a.type==='ledger');
+  const tags = Object.keys(tax.OF).sort();
+  const a = D.accounts.find((x)=>x.code===e.account);
+  return `
+  <div class="card">
+    <h2><span class="act" data-ecancel="1">‹ Back</span> ${e.src?'Edit entry':'New entry'}</h2>
+    ${!accts.length ? `<div class="hint" style="margin-top:0">You need an account first.</div>` : `
+    <div class="field"><label>Account</label>
+      <select id="eAcct" style="width:100%">${accts.map((x)=>
+        `<option value="${esc(x.code)}" ${x.code===e.account?'selected':''}>${
+          esc(x.key||x.code)} (${esc(x.currency)})</option>`).join('')}</select></div>
+    <div class="field"><label>Date</label>
+      <input id="eDate" type="date" value="${esc(e.date)}" style="width:100%"></div>
+    <div class="field"><label>Who or what</label>
+      <input id="eParty" value="${esc(e.party||'')}"></div>
+    <div class="field"><label>Amount in ${esc(a?a.currency:state.cur)}</label>
+      <div class="btnrow">
+        <button class="chip ${e.sign<0?'on':''}" data-esign="-1" style="flex:none">− out</button>
+        <button class="chip ${e.sign>0?'on':''}" data-esign="1" style="flex:none">+ in</button>
+        <input id="eAmount" value="${esc(String(e.amount||''))}" inputmode="decimal"
+          placeholder="0.00" style="flex:1;text-align:right">
+      </div></div>
+    <div class="field"><label>Tag${!tags.length?' <span class="muted">— none yet, gear › Categories</span>':''}</label>
+      <select id="eGroup" style="width:100%">
+        <option value="">—</option>
+        ${tags.map((t)=>`<option value="${esc(t)}" ${t===e.group?'selected':''}>${
+          esc(tagName(t))} · ${esc((tax.byId[tax.OF[t]]||{}).label||tax.OF[t])}</option>`).join('')}
+      </select></div>
+    <div class="field"><label>Note</label>
+      <input id="eNote" value="${esc(e.note||'')}"></div>
+    ${budgets().length?`<div class="field"><label>Budget</label>
+      <div class="chips">${budgets().map((b)=>
+        `<button class="chip ${e.budget===b.id?'on':''}" data-ebudget="${esc(b.id)}">${
+          esc(b.name)}</button>`).join('')}</div></div>`:''}
+    <div class="field"><label>One off</label>
+      <button class="chip ${e.oneoff?'on':''}" data-eoneoff="1">${
+        e.oneoff?'Yes — held apart':'No'}</button></div>
+    <div class="btnrow" style="margin-top:14px">
+      <button class="btn primary" data-esave="1">${e.src?'Save':'Add'}</button>
+      <button class="btn" data-ecancel="1">Cancel</button>
+    </div>
+    ${e.src?`<button class="btn" style="margin-top:7px" data-split="${esc(e.src)}">
+      Split across tags</button>
+    <button class="btn danger" style="margin-top:7px" data-edelete="${esc(e.src)}">
+      Delete</button>`:''}`}
+  </div>`;
+}
+
+const SETTINGS_TABS = [['data','Data'],['owners','People'],['cats','Categories'],['about','About']];
+
+function tabSettings(){
+  if (state.setPage) return setPage();
+  const which = SETTINGS_TABS.some(([k])=>k===state.settings) ? state.settings : 'data';
+  return `
+  <div class="pillrow">${SETTINGS_TABS.map(([id,label])=>
+    `<button class="pill ${which===id?'on':''}" data-set="${id}">${label}</button>`).join('')}</div>
+  ${which==='data' ? settingsData()
+    : which==='owners' ? settingsOwners()
+    : which==='cats' ? settingsCats() : settingsAbout()}`;
+}
+
+/* A full-width page inside the tab, not a sheet. Same chrome, one level down,
+   with a back link where the heading would be. */
+function setPage(){
+  const p = state.setPage;
+  if (p.kind==='person') return personPage();
+  if (p.kind==='cat') return catPage();
+  if (p.kind==='tag') return tagPage();
+  state.setPage = null;
+  return tabSettings();
+}
+
+/* ------------------------------------------------------------------ Data --*/
+
+function settingsData(){
+  const b = store.backend || (store.backend = { url:'', token:'' });
+  const st = state.syncState || {};
+  return `
+  <div class="card">
+    <h2>Spreadsheet</h2>
+    <div class="field"><input id="bkUrl" value="${esc(b.url||'')}"
+      placeholder="https://script.google.com/macros/s/…/exec"></div>
+    <div class="field"><input id="bkTok" value="${esc(b.token||'')}"
+      placeholder="token" type="password"></div>
+    <div class="btnrow">
+      <button class="btn" data-bktest="1">Test</button>
+      <button class="btn primary" data-bksync="1" ${b.url?'':'disabled'}>Sync</button>
+    </div>
+    ${st.msg?`<div class="hint" style="color:${st.bad?'var(--bad)':'var(--good)'}">${esc(st.msg)}</div>`:''}
+  </div>
+
+  <div class="card">
+    <h2>Import and export</h2>
+    <input type="file" id="fImport" accept=".json,application/json" style="display:none">
+    <div class="btnrow">
+      <button class="btn" data-doimport="1">Import</button>
+      <button class="btn" data-doexport="1" ${D.ledger.length||D.accounts.length?'':'disabled'}>Export</button>
+    </div>
+    <button class="btn danger" style="margin-top:7px" data-wipe="1"
+      ${D.ledger.length||D.accounts.length?'':'disabled'}>Erase everything</button>
+    ${!DS.canPersist()?`<div class="hint" style="color:var(--bad)">Not saving: ${
+      esc(DS.storageError()||'no storage')}</div>`:''}
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- People --*/
+
+function settingsOwners(){
+  const own = OWNERS();
+  const codes = Object.keys(own).sort();
+  return `
+  <div class="card">
+    <h2>People <button class="gbtn" data-personnew="1">+</button></h2>
+    ${codes.length?`<div class="rows">${codes.map((o)=>{
+      const n = D.accounts.filter((a)=>(a.owners||[]).includes(o)).length;
+      return `<div class="row" data-personedit="${esc(o)}">
+        <div><div class="code">${esc(own[o])}
+          ${isKid(o)?`<span class="tag" style="border-color:var(--c5);color:var(--c5)">child</span>`:''}</div>
+          <div class="sub">${esc(o)} · ${n} account${n===1?'':'s'}</div></div>
+        <div class="amt"><b class="muted">›</b></div>
+      </div>`;}).join('')}</div>`
+    : `<div class="hint" style="margin-top:0">Nobody yet.</div>`}
+  </div>`;
+}
+
+function personPage(){
+  const p = state.setPage;
+  const own = OWNERS();
+  const isNew = !p.code;
+  const n = p.code ? D.accounts.filter((a)=>(a.owners||[]).includes(p.code)).length : 0;
+  return `
+  <div class="card">
+    <h2><span class="act" data-setback="1">‹ People</span> ${isNew?'New person':esc(own[p.code]||p.code)}</h2>
+    <div class="field"><label>Name</label>
+      <input id="oName" value="${esc(p.name||'')}"></div>
+    <div class="field"><label>Code</label>
+      <input id="oCode" value="${esc(p.code||'')}" ${isNew?'':'disabled'}></div>
+    <div class="field"><label>Kind</label>
+      <div class="chips">
+        <button class="chip ${p.kindSel!=='kid'?'on':''}" data-okind="parent">Parent</button>
+        <button class="chip pink ${p.kindSel==='kid'?'on':''}" data-okind="kid">Child</button>
+      </div></div>
+    <div class="btnrow">
+      <button class="btn primary" data-osave="1">${isNew?'Create':'Save'}</button>
+      <button class="btn" data-setback="1">Cancel</button>
+    </div>
+    ${!isNew?`<button class="btn danger" style="margin-top:7px" data-odelete="${esc(p.code)}"
+      ${n?'disabled':''}>Delete${n?' — '+n+' account'+(n===1?'':'s'):''}</button>`:''}
+  </div>`;
+}
+
+/* ------------------------------------------------------------ Categories --*/
+
+function settingsCats(){
+  const tax = taxonomy();
+  const count = (id) => Object.values(tax.OF).filter((p)=>p===id).length;
+  const unfiled = DS.tagsUsed(D).filter((t)=>!tax.OF[t]);
+  return `
+  <div class="card">
+    <h2>Categories <button class="gbtn" data-catnew="1">+</button></h2>
+    ${!tax.PARENTS.length?`<div class="hint" style="margin-top:0">None yet.</div>`:''}
+    <div class="tiles">${tax.PARENTS.map((p)=>`
+      <div class="tile cls-${esc(p.cls||'other')}" data-catedit="${esc(p.id)}">
+        <div class="k">${esc(p.label)}</div>
+        <div class="v">${count(p.id)}</div>
+        <div class="s">${esc((tax.CLASSES[p.cls]||{}).label||'')}</div>
+      </div>`).join('')}</div>
+  </div>
+  ${unfiled.length?`<div class="card">
+    <h2>Unfiled <span class="muted">${unfiled.length}</span></h2>
+    <div class="rows">${unfiled.map((t)=>`
+      <div class="row" data-tagedit="${esc(t)}">
+        <div><div class="code">${esc(t)}</div></div>
+        <div class="amt"><b style="color:var(--warn)">file</b></div></div>`).join('')}</div>
+  </div>`:''}`;
+}
+
+function catPage(){
+  const p = state.setPage;
+  const tax = taxonomy();
+  const cat = tax.byId[p.id];
+  const isNew = !p.id;
+  const kids = isNew ? [] : Object.keys(tax.OF).filter((t)=>tax.OF[t]===p.id).sort();
+  return `
+  <div class="card">
+    <h2><span class="act" data-setback="1">‹ Categories</span>
+      ${isNew?'New category':esc((cat||{}).label||p.id)}</h2>
+    <div class="field"><label>Name</label>
+      <input id="cName" value="${esc(p.name!==undefined?p.name:((cat||{}).label||''))}"></div>
+    <div class="field"><label>Type</label>
+      <div class="chips">${Object.entries(tax.CLASSES).filter(([,c])=>!c.internal).map(([k,c])=>
+        `<button class="chip ${(isNew ? (p.cls||'optional') : (cat||{}).cls)===k?'on':''}"
+          data-${isNew?'newcls':'setcls'}="${k}">${esc(c.label)}</button>`).join('')}</div>
+      </div>
+    <div class="btnrow">
+      <button class="btn primary" data-csave="1">${isNew?'Create':'Save'}</button>
+      <button class="btn" data-setback="1">Cancel</button>
+    </div>
+    ${!isNew?`<button class="btn danger" style="margin-top:7px" data-cdelete="${esc(p.id)}"
+      ${kids.length?'disabled':''}>Delete${kids.length?' — '+kids.length+' tag'+(kids.length===1?'':'s'):''}</button>`:''}
+  </div>
+
+  ${!isNew?`<div class="card">
+    <h2>Tags <button class="gbtn" data-tagnew="${esc(p.id)}">+</button></h2>
+    ${kids.length?`<div class="rows">${kids.map((t)=>`
+      <div class="row" data-tagedit="${esc(t)}">
+        <div><div class="code">${esc(tagName(t))}</div>
+          ${tagName(t)!==t?`<div class="sub">${esc(t)}</div>`:''}</div>
+        <div class="amt"><b class="muted">›</b></div></div>`).join('')}</div>`
+    : `<div class="hint" style="margin-top:0">None.</div>`}
+  </div>`:''}`;
+}
+
+function tagPage(){
+  const p = state.setPage;
+  const tax = taxonomy();
+  const cur = tax.OF[p.tag];
+  const isNew = !!p.isNew;
+  return `
+  <div class="card">
+    <h2><span class="act" data-setback="1">‹ Back</span> ${isNew?'New tag':esc(p.tag)}</h2>
+    <div class="field"><label>Name</label>
+      <input id="tName" value="${esc(p.name!==undefined?p.name:tagName(p.tag||''))}"></div>
+    <div class="field"><label>Category</label>
+      <div class="chips">${tax.PARENTS.map((q)=>
+        `<button class="chip ${(p.parent||cur)===q.id?'on':''}" data-tparent="${esc(q.id)}">${
+          esc(q.label)}</button>`).join('')}</div></div>
+    <div class="btnrow">
+      <button class="btn primary" data-tsave="1">${isNew?'Create':'Save'}</button>
+      <button class="btn" data-setback="1">Cancel</button>
+    </div>
+    ${!isNew?`<button class="btn danger" style="margin-top:7px" data-tdelete="${esc(p.tag)}">
+      Delete</button>`:''}
+  </div>`;
+}
+
+/* ----------------------------------------------------------------- About --*/
+
+function settingsAbout(){
+  const b = store.backend || {};
+  const standalone = typeof matchMedia==='function'
+    && matchMedia('(display-mode: standalone)').matches;
+  return `
+  <div class="card" id="installRow">
+    <h2>Install</h2>
+    ${standalone ? `<div class="hint" style="margin-top:0">Running as an app.</div>`
+      : `${INSTALL_EVT?`<button class="btn primary" data-install="1">Install</button>`:''}
+         <div class="hint" style="margin-top:${INSTALL_EVT?'8px':'0'}">Or browser menu
+         &rsaquo; Install app.</div>`}
+  </div>
+
+  <div class="card">
+    <h2>Versions</h2>
+    <div class="rows">
+      <div class="row flat"><div><div class="code">App</div></div>
+        <div class="amt" style="display:flex;align-items:center;gap:9px">
+          <b>v${APP_VERSION}</b>
+          <button class="gbtn" data-hardrefresh="1" style="font-size:11px;padding:0 9px">Refresh</button>
+        </div></div>
+      <div class="row flat"><div><div class="code">Backend</div></div>
+        <div class="amt"><b>${store.backendVersion?('v'+store.backendVersion):'—'}</b>
+          <span class="alt">${b.url?'connected':'not connected'}</span></div></div>
+    </div>
+  </div>`;
+}
+
+/* ------------------------------------------------------------------ router --*/
+const SCREENS = { settings:tabSettings, year:tabYear, spend:tabSpend, accounts:tabAccounts,
+  history:tabHistory, bills:tabBills, girls:tabGirls };
+
+/* "Updated 12 Sep" — and in amber once it is more than five weeks old, because
+   a stale figure presented as current is the one failure mode that matters. */
+function renderStamp(){
+  const el=document.getElementById('hdrSub'); if(!el) return;
+  /* With nothing loaded there is no last entry, and printing today's date
+     there would claim one. */
+  if (DS.isEmpty(D)) { el.className='hdrsub'; el.innerHTML='nothing loaded yet'; return; }
+  const d=new Date(LAST_ENTRY+'T12:00:00Z');
+  const age=Math.round((Date.now()-d.getTime())/86400000);
+  const txt=`${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  el.className='hdrsub'+(age>35?' stale':'');
+  el.innerHTML=`<b>${txt}</b>`+(age>35?` · ${age} days ago`:'');
+}
+
+/* History is the one tab that spans everything, so the year does not apply
+   there. It stays visible but dimmed and says why. */
+const YEARLESS = ['history','settings'];
+
+function renderYearBar(){
+  const el = document.getElementById('yearBar'); if (!el) return;
+  const Y = state.year, i = YEARS.indexOf(Y);
+  const off = YEARLESS.includes(state.tab);
+  el.className = 'hdryear' + (off ? ' off' : '');
+  el.innerHTML = `
+    <div class="ystep">
+      <select class="ysel" id="yearSel">${YEARS.slice().reverse().map((y)=>
+        `<option value="${y}" ${y===Y?'selected':''}>${y}</option>`).join('')}</select>
+      <button class="onebtn ${store.showOneOff?'on':''}" id="oneOffTog"
+        title="One-off entries — a house sale, a car sale">1</button>
+    </div>`;
+  const ys=el.querySelector('#yearSel');
+  if (ys) ys.onchange=()=>{
+    state.year=+ys.value; state.account=null; state.spendCat=null;
+    state.checks=false; render(); };
+  const ot=el.querySelector('#oneOffTog');
+  if (ot) ot.onclick=()=>{ store.showOneOff=!store.showOneOff; save(); render(); };
+}
+
+/* Which screen we are on, as a string. A redraw caused by pressing a button
+   on the SAME screen must not animate and must not scroll to the top - that
+   is the jump. Only actually going somewhere does either. */
+const screenKey = () => [state.tab, state.account||'', state.spendCat||'',
+  state.entry?'entry':'', state.editing?'edit':'', state.prevDraft?'prev':'',
+  state.opSplit||''].join('|');
+let lastScreen = null;
+
+function render(){
+  const key = screenKey();
+  const moved = key !== lastScreen;
+  lastScreen = key;
+  renderNav();
+  renderStamp();
+  renderYearBar();
+  document.getElementById('tabs').innerHTML =
+    `<div class="tab active${moved?' enter':''}">${SCREENS[state.tab]()}</div>`;
+  wire();
+  if (moved) scrollTo({top:0});
+}
+
+/* Read the free-text fields back before any re-render. Chips re-render the
+   screen, which would otherwise throw away whatever is half-typed above them. */
+function syncForm(){
+  if (!state.form) return;
+  const g=(id)=>{ const e=document.getElementById(id); return e?e.value:undefined; };
+  for (const [id,f] of [['fBank','bank'],['fKey','key'],['fSub','subtype'],['fCode','code']]) {
+    const v=g(id); if (v!==undefined) state.form[f]=v.trim();
+  }
+}
+
+function wire(){
+  document.querySelectorAll('[data-acct]').forEach((el)=>el.onclick=()=>{
+    state.account=el.dataset.acct; state.tab='accounts'; state.editing=false; state.form=null; render(); });
+  document.querySelectorAll('[data-back]').forEach((el)=>el.onclick=()=>{
+    if (state.editing) { state.editing=false; state.form=null; }
+    else { state.account=null; }
+    render(); });
+  document.querySelectorAll('[data-newkid]').forEach((el)=>el.onclick=()=>{
+    state.account='__new'; state.editing=false;
+    state.form=formFrom(null); state.form.owners=[el.dataset.newkid];
+    state.tab='accounts'; render(); });
+  document.querySelectorAll('[data-new]').forEach((el)=>el.onclick=()=>{
+    state.account='__new'; state.editing=false; state.form=null; render(); });
+  document.querySelectorAll('[data-edit]').forEach((el)=>el.onclick=()=>{
+    state.editing=true; state.form=null; render(); });
+  document.querySelectorAll('[data-year]').forEach((el)=>el.onclick=()=>{
+    state.year=+el.dataset.year; render(); });
+  /* ---- Spend: tiles, the category page, previsions ---- */
+  document.querySelectorAll('[data-opencat]').forEach((el)=>el.onclick=()=>{
+    state.spendCat=el.dataset.opencat; state.spendMonth=null; render(); });
+  document.querySelectorAll('[data-backcat]').forEach((el)=>el.onclick=()=>{
+    state.spendCat=null; state.spendMonth=null; render(); });
+  document.querySelectorAll('[data-pickmonth]').forEach((el)=>el.onclick=()=>{
+    state.spendMonth = state.spendMonth===el.dataset.pickmonth ? null : el.dataset.pickmonth;
+    render(); });
+  document.querySelectorAll('[data-monthclear]').forEach((el)=>el.onclick=()=>{
+    state.spendMonth=null; render(); });
+
+  const syncPrev=()=>{ const d=state.prevDraft; if(!d||!d.cat) return;
+    const by=d.cats[d.cat]||{};
+    document.querySelectorAll('[data-pl]').forEach((e)=>{
+      const [m,j]=e.dataset.pl.split('|'); if(by[m]&&by[m][j]) by[m][j].label=e.value; });
+    document.querySelectorAll('[data-pa]').forEach((e)=>{
+      const [m,j]=e.dataset.pa.split('|'); if(by[m]&&by[m][j]) by[m][j].amount=e.value; }); };
+  document.querySelectorAll('[data-pl],[data-pa]').forEach((e)=>e.onchange=()=>{ syncPrev(); render(); });
+
+  document.querySelectorAll('[data-newprev]').forEach((el)=>el.onclick=()=>{
+    /* Start from the last plan for this year. Re-typing a budget you have
+       already thought about is how a planning feature stops being used. */
+    const last = prevList(state.year).slice(-1)[0];
+    state.prevDraft = { cat:null, cats: last ? JSON.parse(JSON.stringify(last.cats)) : {} };
+    render(); });
+  document.querySelectorAll('[data-editprev]').forEach((el)=>el.onclick=()=>{
+    const last = prevList(state.year).slice(-1)[0];
+    state.prevDraft = { cat:el.dataset.editprev,
+      cats: last ? JSON.parse(JSON.stringify(last.cats)) : {} };
+    render(); });
+  document.querySelectorAll('[data-prevcat]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); state.prevDraft.cat = el.dataset.prevcat || null; render(); });
+  document.querySelectorAll('[data-prevadd]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); const d=state.prevDraft, m=el.dataset.prevadd;
+    const by=d.cats[d.cat]||(d.cats[d.cat]={});
+    (by[m]||(by[m]=[])).push({ label:'', amount:'' }); render(); });
+  document.querySelectorAll('[data-prevdel]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); const [m,j]=el.dataset.prevdel.split('|');
+    const by=state.prevDraft.cats[state.prevDraft.cat]||{};
+    if (by[m]) by[m].splice(+j,1); render(); });
+  document.querySelectorAll('[data-prevcopy]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); const d=state.prevDraft, by=d.cats[d.cat]||{};
+    const fut=futureMonths(state.year); const src=by[fut[0]]||[];
+    for (const m of fut.slice(1)) by[m]=JSON.parse(JSON.stringify(src));
+    render(); });
+  document.querySelectorAll('[data-prevsave]').forEach((el)=>el.onclick=()=>{
+    syncPrev(); const d=state.prevDraft;
+    /* Drop blank lines rather than saving rows of nothing. */
+    for (const c of Object.keys(d.cats)) for (const m of Object.keys(d.cats[c])) {
+      d.cats[c][m]=d.cats[c][m].filter((e)=>+e.amount);
+      if (!d.cats[c][m].length) delete d.cats[c][m];
+    }
+    store.previsions=(store.previsions||[]).concat([{
+      id:'p'+Date.now(), year:state.year, created:new Date().toISOString(), cats:d.cats }]);
+    save(); state.prevDraft=null; state.prevIdx=null; render(); });
+  document.querySelectorAll('[data-prevcancel]').forEach((el)=>el.onclick=()=>{
+    state.prevDraft=null; render(); });
+  document.querySelectorAll('[data-prevnav]').forEach((el)=>el.onclick=()=>{
+    const list=prevList(state.year);
+    const cur = state.prevIdx===null||state.prevIdx===undefined ? list.length-1 : state.prevIdx;
+    state.prevIdx = Math.min(Math.max(cur + (+el.dataset.prevnav), 0), list.length-1);
+    render(); });
+
+  const scur=document.getElementById('savCur');
+  if (scur) scur.onchange=()=>{ state.savCur=scur.value; render(); };
+  document.querySelectorAll('[data-wsel]').forEach((el)=>el.onclick=()=>{
+    state.wsel=el.dataset.wsel; render(); });
+  document.querySelectorAll('[data-which]').forEach((el)=>el.onclick=()=>{
+    openWhich(el.dataset.which); });
+  document.querySelectorAll('[data-posyear]').forEach((el)=>el.onclick=()=>{
+    state.posYear=+el.dataset.posyear; render(); });
+  const ss=document.getElementById('selScope');
+  if (ss) ss.onchange=()=>{ state.spendScope=ss.value; render(); };
+  const sc=document.getElementById('selCat');
+  if (sc) sc.onchange=()=>{ state.spendCat=sc.value; render(); };
+  document.querySelectorAll('[data-spendcat]').forEach((el)=>el.onclick=()=>{
+    if (el.dataset.spendcat) { state.spendCat=el.dataset.spendcat; render(); } });
+  document.querySelectorAll('[data-openmonth]').forEach((el)=>el.onclick=()=>{
+    const tax=taxonomy();
+    const pick = state.spendCat && tax.byId[state.spendCat] ? state.spendCat : null;
+    openMonthEntries(el.dataset.openmonth, pick || (tax.PARENTS[0]||{}).id); });
+  document.querySelectorAll('[data-tagopen]').forEach((el)=>el.onclick=()=>{
+    state.openTag = state.openTag===el.dataset.tagopen ? null : el.dataset.tagopen; render(); });
+
+  /* editor */
+  document.querySelectorAll('[data-owner]').forEach((el)=>el.onclick=()=>{
+    syncForm(); const o=el.dataset.owner, f=state.form;
+    f.owners = f.owners.includes(o) ? f.owners.filter((x)=>x!==o) : [...f.owners,o];
+    if (!f.owners.length) f.owners=[o];          // an account belongs to someone
+    render(); });
+  document.querySelectorAll('[data-cat]').forEach((el)=>el.onclick=()=>{
+    syncForm(); state.form.category=el.dataset.cat; render(); });
+  document.querySelectorAll('[data-type]').forEach((el)=>el.onclick=()=>{
+    syncForm(); state.form.type=el.dataset.type; render(); });
+  document.querySelectorAll('[data-ccy]').forEach((el)=>el.onclick=()=>{
+    syncForm(); state.form.currency=el.dataset.ccy; render(); });
+
+  document.querySelectorAll('[data-save]').forEach((el)=>el.onclick=()=>{
+    syncForm(); const f=state.form, isNew=!el.dataset.save;
+    const code = isNew ? (f.code||'').trim() : el.dataset.save;
+    if (!code) { alert('A sheet code is needed — it is what links the account to its rows.'); return; }
+    if (!(f.owners||[]).length) { alert('Pick an owner. Add people first, under the gear.'); return; }
+    if (isNew && (registry()[code] || C.acct(code))) { alert(code+' already exists.'); return; }
+    const fields = { bank:f.bank, key:f.key||code, type:f.type, subtype:f.subtype,
+      category:f.category, currency:f.currency, owners:f.owners, closed:f.closed };
+    /* Into the DATASET, not just the per-device override.
+
+       An account that exists only in `store.registry` is re-created from
+       nothing by applyRegistry on every render, which throws away the `years`
+       that touch() works out from its entries — and balances() walks `years`,
+       so the account's money silently stopped counting. The override layer is
+       for EDITING an account the data already has; creating one has to write
+       the account itself. */
+    const existing = D.accounts.find((a)=>a.code===code);
+    if (existing) Object.assign(existing, fields);
+    else DS.addAccount(D, { code, ...fields });
+    /* An edit to an imported account still belongs in the override, so
+       "Reset to accounts.js" keeps meaning something. */
+    if (!isNew && existing && !existing.created) store.registry[code] = fields;
+    saveData(); save(); afterDataChange();
+    state.editing=false; state.form=null; state.account=code; render(); });
+
+  document.querySelectorAll('[data-reset]').forEach((el)=>el.onclick=()=>{
+    delete store.registry[el.dataset.reset]; save(); applyReg();
+    state.editing=false; state.form=null; render(); });
+
+  document.querySelectorAll('[data-close]').forEach((el)=>el.onclick=()=>{
+    const code=el.dataset.close, a=C.acct(code);
+    const lat=C.latest({...opts(), includeClosed:true}).find((x)=>x.code===code);
+    const now = lat ? lat.closed : !!a.closed;
+    store.registry[code] = { ...(store.registry[code]||registry()[code]||{}), closed:!now };
+    save(); applyReg(); state.editing=false; state.form=null; render(); });
+
+  /* ---- operations: filter, split, import ---- */
+  /* Only fields that are actually on screen. Reading a missing input as ""
+     would wipe the filter every time the card collapsed. */
+  const syncFilter=()=>{ for (const [id,k] of
+      [['fQ','q'],['fFrom','from'],['fTo','to'],['fMin','min'],['fMax','max']]) {
+    const e=document.getElementById(id); if (e) state.opFilter[k]=e.value; } };
+  ['fQ','fFrom','fTo','fMin'].forEach((id)=>{ const e=document.getElementById(id);
+    if (e) e.onchange=()=>{ syncFilter(); render(); }; });
+  document.querySelectorAll('[data-optag]').forEach((el)=>el.onclick=(ev)=>{
+    if (ev) ev.stopPropagation();
+    syncFilter();
+    state.opFilter.tag = state.opFilter.tag===el.dataset.optag ? '' : el.dataset.optag;
+    state.fmenu=null; render(); });
+  document.querySelectorAll('[data-clearfilter]').forEach((el)=>el.onclick=(ev)=>{
+    if (ev) ev.stopPropagation(); state.opFilter=blankFilter(); state.fmenu=null; render(); });
+  document.querySelectorAll('[data-togglefilter]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); state.fmenu = state.fmenu ? null : 'root'; render(); });
+  document.querySelectorAll('[data-fmenu]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation();
+    state.fmenu = el.dataset.fmenu==='root' ? 'root' : el.dataset.fmenu; render(); });
+  document.querySelectorAll('[data-fapply]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); syncFilter(); state.fmenu='root'; render(); });
+  document.querySelectorAll('[data-fdir]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); state.opFilter.dir=el.dataset.fdir; state.fmenu=null; render(); });
+  document.querySelectorAll('[data-fsort]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); state.opFilter.sort=el.dataset.fsort; render(); });
+  document.querySelectorAll('[data-fdesc]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); state.opFilter.desc=el.dataset.fdesc==='1'; render(); });
+  document.querySelectorAll('[data-foneoff]').forEach((el)=>el.onclick=(ev)=>{
+    ev.stopPropagation(); state.opFilter.oneoff = el.dataset.foneoff==='1'; state.fmenu=null; render(); });
+  /* Anywhere else closes it, the way every menu on a phone should. */
+  document.querySelectorAll('.fmenu').forEach((el)=>el.onclick=(ev)=>ev.stopPropagation());
+  document.querySelectorAll('[data-unfilter]').forEach((el)=>el.onclick=()=>{
+    syncFilter(); state.opFilter[el.dataset.unfilter]=''; render(); });
+  document.querySelectorAll('[data-opsub]').forEach((el)=>el.onclick=(ev)=>{
+    if (ev) ev.stopPropagation();
+    syncFilter();
+    state.opFilter.subtag = state.opFilter.subtag===el.dataset.opsub ? '' : el.dataset.opsub;
+    state.fmenu=null; render(); });
+  document.querySelectorAll('[data-install]').forEach((el)=>el.onclick=async()=>{
+    if (!INSTALL_EVT) return;
+    INSTALL_EVT.prompt();
+    try { await INSTALL_EVT.userChoice; } catch (e) {}
+    INSTALL_EVT = null; render(); });
+
+  /* An installed app serves itself from the service worker cache, so an
+     ordinary reload can hand you the same old version forever. This throws
+     the worker and its caches away first — the only reliable way to leave a
+     version behind. Your data is untouched; it lives in localStorage, which
+     this does not go near. */
+  document.querySelectorAll('[data-hardrefresh]').forEach((el)=>el.onclick=async()=>{
+    el.textContent='…';
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r)=>r.unregister()));
+      }
+      if (typeof caches!=='undefined' && caches.keys) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k)=>caches.delete(k)));
+      }
+    } catch (e) { /* nothing cached is still a fine state to reload from */ }
+    location.reload();
+  });
+
+  document.querySelectorAll('[data-explain]').forEach((el)=>el.onclick=()=>{
+    explainBox(el.dataset.explain); });
+  document.querySelectorAll('[data-checks]').forEach((el)=>el.onclick=()=>{
+    state.checks=true; state.tab='accounts'; render(); });
+  document.querySelectorAll('[data-checksback]').forEach((el)=>el.onclick=()=>{
+    state.checks=false; state.check=null; render(); });
+  document.querySelectorAll('[data-checkone]').forEach((el)=>el.onclick=()=>{
+    state.check=el.dataset.checkone; render(); });
+  document.querySelectorAll('[data-checkback]').forEach((el)=>el.onclick=()=>{
+    state.check=null; render(); });
+  document.querySelectorAll('[data-okcheck]').forEach((el)=>el.onclick=()=>{
+    dismissed().push(el.dataset.okcheck); save(); state.check=null; render(); });
+  document.querySelectorAll('[data-uncheck]').forEach((el)=>el.onclick=()=>{
+    store.dismissed = dismissed().filter((x)=>x!==el.dataset.uncheck);
+    save(); state.check=null; render(); });
+  document.querySelectorAll('[data-undismiss]').forEach((el)=>el.onclick=()=>{
+    if (!confirm('Put all ' + dismissed().length + ' back on the list?')) return;
+    store.dismissed=[]; save(); render(); });
+
+  /* ---- Settings ---- */
+  const back=()=>{ state.setPage=null; render(); };
+  document.querySelectorAll('[data-set]').forEach((el)=>el.onclick=()=>{
+    state.settings=el.dataset.set; state.setPage=null; render(); });
+  document.querySelectorAll('[data-setback]').forEach((el)=>el.onclick=back);
+
+  /* data: import, export, wipe */
+  document.querySelectorAll('[data-doimport]').forEach((el)=>el.onclick=()=>{
+    const inp=document.getElementById('fImport');
+    if (!inp) { alert('No file picker on this screen.'); return; }
+    inp.onchange=()=>{
+      const f=inp.files && inp.files[0]; if(!f) return;
+      const rd=new FileReader();
+      rd.onload=async()=>{
+        let next;
+        try { next = DS.parseImport(String(rd.result)); }
+        catch (err) { alert(err.message); return; }
+        const n=next.ledger.length, a=next.accounts.length;
+        if (!confirm('Import '+n.toLocaleString('en-US')+' entries and '+a
+          +' accounts? This replaces everything in the app.')) return;
+        D = next;
+        const ok = await DS.saveAsync(D);
+        if (!ok) {
+          alert('Could not store it: ' + (DS.storageError() || 'unknown')
+            + '. The data is loaded for this session only.');
+          LedgerCore.init(D); applyReg(); render();
+          return;
+        }
+        location.reload();
+      };
+      rd.onerror=()=>alert('Could not read that file.');
+      rd.readAsText(f);
+    };
+    inp.click(); });
+
+  document.querySelectorAll('[data-doexport]').forEach((el)=>el.onclick=()=>{
+    const blob=new Blob([DS.exportBlob(D)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='ledger-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 5000); });
+
+  document.querySelectorAll('[data-wipe]').forEach((el)=>el.onclick=async()=>{
+    if (!confirm('Erase every account and entry on this device?')) return;
+    if (!confirm('There is no undo.')) return;
+    D = DS.empty(); await DS.saveAsync(D); location.reload(); });
+
+  /* backend */
+  const bkRead=()=>{ const u=document.getElementById('bkUrl'), t=document.getElementById('bkTok');
+    store.backend=store.backend||{};
+    if (u) store.backend.url=u.value.trim();
+    if (t) store.backend.token=t.value.trim();
+    save(); return store.backend; };
+  document.querySelectorAll('[data-bktest]').forEach((el)=>el.onclick=async()=>{
+    const cfg=bkRead();
+    state.syncState={ msg:'Testing…' }; render();
+    try { const j=await BK.ping(cfg);
+      store.backendVersion=j.backend; save();
+      state.syncState={ msg:'Connected — backend v'+j.backend }; }
+    catch(e){ state.syncState={ msg:e.message, bad:true }; }
+    render(); });
+  document.querySelectorAll('[data-bksync]').forEach((el)=>el.onclick=async()=>{
+    const cfg=bkRead();
+    state.syncState={ msg:'Syncing…' }; render();
+    try { const j=await BK.push(cfg, D);
+      store.backendVersion=j.backend; save();
+      state.syncState={ msg:'Sent '+D.ledger.length+' entries' }; }
+    catch(e){ state.syncState={ msg:e.message, bad:true }; }
+    render(); });
+
+  /* people */
+  document.querySelectorAll('[data-personnew]').forEach((el)=>el.onclick=()=>{
+    state.setPage={ kind:'person', code:'', name:'', kindSel:'parent' }; render(); });
+  document.querySelectorAll('[data-personedit]').forEach((el)=>el.onclick=()=>{
+    const o=el.dataset.personedit;
+    state.setPage={ kind:'person', code:o, name:OWNERS()[o]||o, kindSel:ownerKind(o) }; render(); });
+  document.querySelectorAll('[data-okind]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('oName'), c=document.getElementById('oCode');
+    if (n) state.setPage.name=n.value;
+    if (c && !state.setPage.code) state.setPage.code=c.value;
+    state.setPage.kindSel=el.dataset.okind; render(); });
+  document.querySelectorAll('[data-osave]').forEach((el)=>el.onclick=()=>{
+    const p=state.setPage;
+    const n=document.getElementById('oName'), c=document.getElementById('oCode');
+    const name=(n&&n.value||'').trim();
+    const code=(p.code||(c&&c.value)||'').trim().toUpperCase();
+    if (!name||!code) { alert('A name and a code.'); return; }
+    if (!p.code && OWNERS()[code]) { alert(code+' is taken.'); return; }
+    DS.setOwner(D, code, name, p.kindSel || (p.code?ownerKind(p.code):'parent'));
+    state.setPage=null; saveData(); afterDataChange(); render(); });
+  document.querySelectorAll('[data-odelete]').forEach((el)=>el.onclick=()=>{
+    if (!confirm('Delete this person?')) return;
+    try { DS.removeOwner(D, el.dataset.odelete); }
+    catch(e){ alert(e.message); return; }
+    state.setPage=null; saveData(); afterDataChange(); render(); });
+
+  /* categories */
+  document.querySelectorAll('[data-catnew]').forEach((el)=>el.onclick=()=>{
+    state.setPage={ kind:'cat', id:'', name:'', cls:'optional' }; render(); });
+  document.querySelectorAll('[data-catedit]').forEach((el)=>el.onclick=()=>{
+    state.setPage={ kind:'cat', id:el.dataset.catedit }; render(); });
+  document.querySelectorAll('[data-newcls]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('cName'); if (n) state.setPage.name=n.value;
+    state.setPage.cls=el.dataset.newcls; render(); });
+  document.querySelectorAll('[data-setcls]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('cName'); if (n) state.setPage.name=n.value;
+    DS.setCategoryClass(D, state.setPage.id, el.dataset.setcls); commit(); });
+  document.querySelectorAll('[data-csave]').forEach((el)=>el.onclick=()=>{
+    const p=state.setPage;
+    const n=document.getElementById('cName');
+    const label=(n&&n.value||'').trim();
+    if (!label) { alert('A name.'); return; }
+    try {
+      if (!p.id) DS.addCategory(D, label, p.cls || 'optional');
+      else DS.renameCategory(D, p.id, label);
+    } catch (e) { alert(e.message); return; }
+    state.setPage=null; commit(); });
+  document.querySelectorAll('[data-cdelete]').forEach((el)=>el.onclick=()=>{
+    if (!confirm('Delete this category?')) return;
+    try { DS.removeCategory(D, el.dataset.cdelete); }
+    catch (e) { alert(e.message); return; }
+    state.setPage=null; commit(); });
+
+  /* tags */
+  document.querySelectorAll('[data-tagnew]').forEach((el)=>el.onclick=()=>{
+    state.setPage={ kind:'tag', tag:'', name:'', parent:el.dataset.tagnew, isNew:true }; render(); });
+  document.querySelectorAll('[data-tagedit]').forEach((el)=>el.onclick=()=>{
+    state.setPage={ kind:'tag', tag:el.dataset.tagedit }; render(); });
+  document.querySelectorAll('[data-tparent]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('tName'); if (n) state.setPage.name=n.value;
+    state.setPage.parent=el.dataset.tparent; render(); });
+  document.querySelectorAll('[data-tsave]').forEach((el)=>el.onclick=()=>{
+    const p=state.setPage;
+    const n=document.getElementById('tName');
+    const name=(n&&n.value||'').trim();
+    if (!name) { alert('A name.'); return; }
+    const parent=p.parent || taxonomy().OF[p.tag];
+    if (!parent) { alert('Pick a category.'); return; }
+    try {
+      if (p.isNew) DS.addTag(D, name, parent);
+      else {
+        DS.moveTag(D, p.tag, parent);
+        /* Renaming changes the LABEL, not the key: the key is what every entry
+           carries, and rewriting it would orphan them. */
+        DS.renameTag(D, p.tag, name);
+      }
+    } catch (e) { alert(e.message); return; }
+    state.setPage=null; commit(); });
+  document.querySelectorAll('[data-tdelete]').forEach((el)=>el.onclick=()=>{
+    const t=el.dataset.tdelete;
+    const n=D.ledger.filter((r)=>r.group===t).length;
+    if (!confirm(n ? 'That tag is on '+n+' entries. Unfile it? The entries stay.' : 'Delete this tag?')) return;
+    DS.removeTag(D, t);
+    state.setPage=null; commit(); });
+
+  /* ---- budgets ---- */
+  document.querySelectorAll('[data-newbudget]').forEach((el)=>el.onclick=()=>{
+    state.budgetEdit={ id:null, name:'', amount:'' }; render(); });
+  document.querySelectorAll('[data-openbudget]').forEach((el)=>el.onclick=()=>{
+    state.budget=el.dataset.openbudget; render(); });
+  document.querySelectorAll('[data-bback]').forEach((el)=>el.onclick=()=>{
+    state.budget=null; render(); });
+  document.querySelectorAll('[data-bedit]').forEach((el)=>el.onclick=()=>{
+    const b=budgetOf(el.dataset.bedit); if(!b) return;
+    state.budgetEdit={ ...b }; render(); });
+  document.querySelectorAll('[data-bcancel]').forEach((el)=>el.onclick=()=>{
+    state.budgetEdit=null; render(); });
+  document.querySelectorAll('[data-bsave]').forEach((el)=>el.onclick=()=>{
+    const n=document.getElementById('bName'), a=document.getElementById('bAmount');
+    const name=(n&&n.value||'').trim(), amount=Math.abs(parseFloat(a&&a.value));
+    if (!name) { alert('A name, please.'); return; }
+    if (!isFinite(amount)) { alert('An amount, please.'); return; }
+    const cur=state.budgetEdit;
+    if (cur.id) { const b=budgetOf(cur.id); b.name=name; b.amount=amount; }
+    else budgets().push({ id:DS.uid('b'), name, amount, created:new Date().toISOString() });
+    state.budgetEdit=null; save(); render(); });
+  document.querySelectorAll('[data-bclose]').forEach((el)=>el.onclick=()=>{
+    const b=budgetOf(el.dataset.bclose); if(!b) return;
+    if (b.closed) { delete b.closed; }
+    else {
+      /* Closed as of the last day with data, not "now" - looking at 2019 and
+         closing something should not stamp it 2026. */
+      b.closed = state.year===YEAR ? LAST_ENTRY : state.year+'-12-31';
+    }
+    save(); render(); });
+  document.querySelectorAll('[data-bdelete]').forEach((el)=>el.onclick=()=>{
+    const id=el.dataset.bdelete;
+    const n=budgetRows(id).length;
+    if (!confirm(n
+      ? n + ' entries are tagged with this budget. Deleting it untags them; the entries'
+        + ' themselves stay exactly where they are. Delete the budget?'
+      : 'Delete this budget?')) return;
+    for (const r of D.ledger) if (r.budget===id) delete r.budget;
+    store.budgets = budgets().filter((b)=>b.id!==id);
+    state.budgetEdit=null; state.budget=null; save(); saveData(); render(); });
+
+  /* ---- entries ---- */
+  const newEntry=(code)=>({ account:code, date:TODAY, party:'', amount:'',
+    sign:-1, group:'', note:'', oneoff:false, budget:'', src:null });
+  document.querySelectorAll('[data-addentry]').forEach((el)=>el.onclick=()=>{
+    state.entry=newEntry(el.dataset.addentry||state.account); state.tab='accounts'; render(); });
+  document.querySelectorAll('[data-editentry]').forEach((el)=>el.onclick=()=>{
+    const r=D.ledger.find((x)=>x.src===el.dataset.editentry); if(!r) return;
+    state.entry={ account:r.account, date:r.date, party:r.party,
+      amount:Math.abs(r.amount), sign:r.amount<0?-1:1, group:r.group, note:r.note,
+      oneoff:!!r.oneoff, budget:r.budget||'', src:r.src };
+    render(); });
+  const syncEntry=()=>{ const e=state.entry; if(!e) return;
+    const g=(id)=>{const x=document.getElementById(id);return x?x.value:undefined;};
+    const m={ eAcct:'account', eDate:'date', eParty:'party', eAmount:'amount',
+      eGroup:'group', eNote:'note' };
+    for (const [id,f] of Object.entries(m)) { const v=g(id); if (v!==undefined) e[f]=v; } };
+  document.querySelectorAll('[data-esign]').forEach((el)=>el.onclick=()=>{
+    syncEntry(); state.entry.sign=+el.dataset.esign; render(); });
+  document.querySelectorAll('[data-eoneoff]').forEach((el)=>el.onclick=()=>{
+    syncEntry(); state.entry.oneoff=!state.entry.oneoff; render(); });
+  document.querySelectorAll('[data-ebudget]').forEach((el)=>el.onclick=()=>{
+    syncEntry();
+    state.entry.budget = state.entry.budget===el.dataset.ebudget ? '' : el.dataset.ebudget;
+    render(); });
+  document.querySelectorAll('[data-ecancel]').forEach((el)=>el.onclick=()=>{
+    state.entry=null; render(); });
+  document.querySelectorAll('[data-esave]').forEach((el)=>el.onclick=()=>{
+    syncEntry(); const e=state.entry;
+    const amt=Math.abs(parseFloat(e.amount));
+    if (!e.account) { alert('Pick an account.'); return; }
+    if (!e.date) { alert('Pick a date.'); return; }
+    if (!isFinite(amt) || amt===0) { alert('An amount, please.'); return; }
+    if (!e.group) { alert('Pick a tag — an untagged entry cannot be reported on.'); return; }
+    const a=D.accounts.find((x)=>x.code===e.account);
+    const tax=taxonomy();
+    const kind=(tax.byId[tax.OF[e.group]]||{}).kind || 'spend';
+    const payload={ account:e.account, date:e.date, party:e.party,
+      amount:amt*(e.sign<0?-1:1), group:e.group, note:e.note,
+      oneoff:!!e.oneoff, budget:e.budget||undefined,
+      currency:a?a.currency:'USD', type:kind };
+    if (e.src) DS.updateEntry(D, e.src, payload); else DS.addEntry(D, payload);
+    state.entry=null; commit(); });
+  document.querySelectorAll('[data-edelete]').forEach((el)=>el.onclick=()=>{
+    if (!confirm('Delete this entry?')) return;
+    DS.deleteEntry(D, el.dataset.edelete); state.entry=null; commit(); });
+
+  document.querySelectorAll('[data-addto]').forEach((el)=>el.onclick=()=>{
+    alert('Import and manual entry are the next piece of work. When they land they will read a bank '
+      + 'export, propose a tag per line from the ' + D.merchants.length + ' payees already learned '
+      + 'from your own history, and write to a new planning sheet — never to your year books.'); });
+
+  document.querySelectorAll('[data-split]').forEach((el)=>el.onclick=()=>{
+    state.opSplit=el.dataset.split; render(); });
+  document.querySelectorAll('[data-splitclose]').forEach((el)=>el.onclick=()=>{
+    state.opSplit=null; state.draftSplit=null; render(); });
+  const draft=()=>state.draftSplit;
+  const syncSplit=()=>{ const d=draft(); if(!d) return;
+    document.querySelectorAll('[data-splitgrp]').forEach((e)=>{ d[+e.dataset.splitgrp].group=e.value; });
+    document.querySelectorAll('[data-splitamt]').forEach((e)=>{ d[+e.dataset.splitamt].amount=e.value; }); };
+  document.querySelectorAll('[data-splitgrp],[data-splitamt]').forEach((e)=>
+    e.onchange=()=>{ syncSplit(); render(); });
+  document.querySelectorAll('[data-splitadd]').forEach((el)=>el.onclick=()=>{
+    syncSplit(); const d=draft(); if(d) d.push({ group:'Misc', amount:0 }); render(); });
+  document.querySelectorAll('[data-splitdel]').forEach((el)=>el.onclick=()=>{
+    syncSplit(); const d=draft(); if(d) d.splice(+el.dataset.splitdel,1); render(); });
+  document.querySelectorAll('[data-splitsave]').forEach((el)=>el.onclick=()=>{
+    syncSplit(); const d=draft(); if(!d) return;
+    store.splits[el.dataset.splitsave]=d.map((p)=>({ group:p.group, amount:+p.amount }));
+    save(); state.opSplit=null; state.draftSplit=null; render(); });
+  document.querySelectorAll('[data-splitundo]').forEach((el)=>el.onclick=()=>{
+    delete store.splits[el.dataset.splitundo];
+    save(); state.opSplit=null; state.draftSplit=null; render(); });
+  document.querySelectorAll('[data-go]').forEach((el)=>el.onclick=()=>{ state.tab=el.dataset.go; render(); });
+  document.querySelectorAll('[data-go-import]').forEach((el)=>el.onclick=()=>{
+    state.settings='data'; state.tab='settings'; state.setPage=null; render(); });
+  document.querySelectorAll('[data-month]').forEach((el)=>el.onclick=()=>{
+    state.spendMonth = state.spendMonth===el.dataset.month ? null : el.dataset.month; render(); });
+  document.querySelectorAll('[data-bill]').forEach((el)=>el.onclick=()=>{ state.bill=el.dataset.bill; render(); });
+  document.querySelectorAll('[data-girls]').forEach((el)=>el.onclick=()=>{
+    const kids = Object.keys(OWNERS()).filter(isKid);
+    store.excludeOwners = el.dataset.girls==='out'
+      ? [...new Set([...store.excludeOwners, ...kids])]
+      : store.excludeOwners.filter((x)=>!kids.includes(x));
+    save(); render(); });
+  const rl=document.getElementById('rLo'), rh=document.getElementById('rHi');
+  /* oninput, not onchange: the graph should follow your thumb. Redrawing an
+     SVG of a hundred points is nothing, and waiting for release makes the
+     control feel broken. The slider is re-focused after each redraw so the
+     drag survives the innerHTML swap. */
+  if (rl) rl.oninput=()=>{ state.histLo=+rl.value;
+    if (state.histHi!==null && state.histHi<=state.histLo) state.histHi=state.histLo+1;
+    histLive(); };
+  if (rh) rh.oninput=()=>{ state.histHi=+rh.value;
+    if (state.histLo!==null && state.histLo>=state.histHi) state.histLo=state.histHi-1;
+    histLive(); };
+  /* One full render when the thumb is released, so the year-ends table and the
+     comparison catch up with the window. */
+  if (rl) rl.onchange=()=>render();
+  if (rh) rh.onchange=()=>render();
+  document.querySelectorAll('[data-rngall]').forEach((el)=>el.onclick=()=>{
+    state.histLo=null; state.histHi=null; render(); });
+  const sv=document.getElementById('selSeries');
+  if (sv) sv.onchange=()=>{ state.series=sv.value; render(); };
+  const cm=document.getElementById('cmpA');
+  if (cm) cm.onchange=()=>{ state.cmpA=+cm.value; render(); };
+}
+
+document.querySelectorAll('#curTog button').forEach((b)=>b.onclick=()=>{
+  state.cur=b.dataset.cur;
+  document.querySelectorAll('#curTog button').forEach((x)=>x.classList.toggle('on', x.dataset.cur===state.cur));
+  render();
+});
+document.getElementById('btnSettings').onclick = ()=>{
+  state.tab='settings'; state.setPage=null; render(); };
+
+/* Deep links so a tab can be screenshotted or linked: #spend?cur=EUR */
+let OPEN_SHEET = null;
+function readHash(){
+  const [t,qs]=location.hash.replace(/^#/,'').split('?');
+  if (SCREENS[t]) state.tab=t;
+  const q=new URLSearchParams(qs||'');
+  if (q.get('cur')) state.cur = q.get('cur').toUpperCase()==='EUR' ? 'EUR' : 'USD';
+  if (q.get('acct')) { state.account=q.get('acct'); state.tab='accounts'; }
+  if (q.get('edit')) { state.account=q.get('edit'); state.editing=true; state.tab='accounts'; }
+  if (q.get('new')) { state.account='__new'; state.tab='accounts'; }
+  if (q.get('year')) state.year = +q.get('year');
+  /* Dev links straight into a sheet, so the Settings and Check screens can be
+     screenshotted like any tab. */
+  if (q.get('settings')) { state.settings = q.get('settings'); state.tab='settings'; }
+  if (q.get('check')) { state.checks = true; state.tab = 'accounts'; }
+  if (q.get('month')) state.spendMonth=q.get('month');
+  document.querySelectorAll('#curTog button').forEach((x)=>x.classList.toggle('on', x.dataset.cur===state.cur));
+}
+addEventListener('hashchange', ()=>{ readHash(); render(); });
+
+/* Dev probe: #today?debugw=1 lists anything wider than the column. A
+   phone-first layout fails silently by pushing content off the right edge, and
+   there is no console to read in a headless screenshot. */
+function debugWidths(){
+  const host=document.querySelector('.wrap'); if(!host) return;
+  const limit=host.clientWidth;
+  const bad=[...document.querySelectorAll('.wrap *')]
+    .map((e)=>({e, w:Math.round(e.scrollWidth), r:Math.round(e.getBoundingClientRect().width)}))
+    .filter((x)=>x.w>limit+1)
+    .slice(0,14);
+  const nav=document.querySelector('nav');
+  const navW=nav?Math.round(nav.scrollWidth):0;
+  const box=document.createElement('div');
+  box.className='card';
+  box.innerHTML=`<h2>Width probe</h2>
+    <div class="hint" style="margin-top:0">viewport ${innerWidth} · column ${limit} ·
+      document ${document.documentElement.scrollWidth} · nav ${navW}</div>
+    ${bad.length?`<div class="rows">${bad.map((x)=>`<div class="row flat">
+      <div><div class="code" style="font-size:12px">${esc(x.e.tagName.toLowerCase())}${
+        x.e.className?'.'+esc(String(x.e.className).split(' ')[0]):''}</div>
+        <div class="sub">${esc((x.e.textContent||'').trim().slice(0,30))}</div></div>
+      <div class="amt"><b>${x.w}px</b><span class="alt">shown ${x.r}</span></div></div>`).join('')}</div>`
+      : '<div class="hint">Nothing overflows.</div>'}`;
+  host.appendChild(box);
+}
+
+/* Install the offline cache, but only when served over http - opening
+   index.html straight off the disk has no origin to register against, and the
+   failed registration would throw in the console every time. */
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+
+readHash();
+render();
+adoptStored();
+if (OPEN_SHEET) OPEN_SHEET();
+if (/debugw/.test(location.hash)) setTimeout(debugWidths, 50);
+</script>
+</body>
+</html>

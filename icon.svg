@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- White ground, Graphite's palette on top: #3b82f6 blue, #4ade80 green,
+       #fbbf24 amber, #06101c ink. An open book, seen face on. -->
+  <rect width="512" height="512" rx="104" fill="#ffffff"/>
+
+  <g transform="translate(0,14)">
+    <!-- left leaf -->
+    <path d="M256 150 C214 118 158 106 104 110 C90 111 82 120 82 133
+             L82 358 C82 370 91 378 104 377 C156 373 214 384 256 414 Z"
+          fill="#3b82f6"/>
+    <!-- right leaf -->
+    <path d="M256 150 C298 118 354 106 408 110 C422 111 430 120 430 133
+             L430 358 C430 370 421 378 408 377 C356 373 298 384 256 414 Z"
+          fill="#4ade80"/>
+
+    <!-- the spine, drawn over both so the fold reads -->
+    <path d="M256 150 L256 414" stroke="#06101c" stroke-width="17"
+          stroke-linecap="round" fill="none"/>
+
+    <!-- ruled lines: a ledger, not a novel -->
+    <g stroke="#ffffff" stroke-width="13" stroke-linecap="round" opacity=".85">
+      <path d="M124 186 L214 196"/>
+      <path d="M124 240 L214 250"/>
+      <path d="M124 294 L214 304"/>
+      <path d="M298 196 L388 186"/>
+      <path d="M298 250 L388 240"/>
+      <path d="M298 304 L388 294"/>
+    </g>
+
+    <!-- the amber bookmark, the one warm note -->
+    <path d="M336 110 L336 214 L370 186 L404 214 L404 110 Z" fill="#fbbf24"/>
+  </g>
+</svg>
